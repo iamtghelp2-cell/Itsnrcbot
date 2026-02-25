@@ -116,8 +116,8 @@ class script(object):
 </blockquote>
 """
     CAPTION = """<b><a href="itsnrcbot"></a>\n\n⚜️ Powered By : <a href="itsnrcbot">iamtghelp 😎</a>\n\nExtracted By : 𝐈𝐚𝐦𝐭𝐠𝐡𝐞𝐥𝐩</b>"""
-    LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded </b>""
-    
+    LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded</b>"""
+
 <b>Your 10 free saves for today have been used.</b>
 <i>Quota resets automatically after 24 hours from first download.</i>
 <blockquote><b>🔓 Upgrade to Premium for Unlimited Access!</b></blockquote>
