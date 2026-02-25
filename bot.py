@@ -22,6 +22,9 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Small cache for your ~200 users to prevent DB lag
 USER_CACHE = set()
 
+# आपकी और आपके दोस्त की ID यहाँ सुरक्षित कर दी गई है
+SUDO_USERS = [7951185227, 7732591949]
+
 LOGO = r"""
   ██████╗  ██╗  ██╗  █████╗  ███╗   ██╗ ██████╗   █████╗  ██╗      
   ██╔══██╗ ██║  ██║ ██╔══██╗ ████╗  ██║ ██╔══██╗ ██╔══██╗ ██║      
@@ -136,6 +139,20 @@ class Bot(Client):
         await self.set_bot_commands(commands)
 
 BotInstance = Bot()
+
+# ---------------------------------------------------------
+# NEW: Owner Only Lock (सबसे पहले यही चेक होगा)
+# ---------------------------------------------------------
+@BotInstance.on_message(filters.private & filters.incoming, group=-2)
+async def owner_only_guard(bot: Client, message: Message):
+    if message.from_user.id not in SUDO_USERS:
+        await message.reply_text(
+            "<b>⚠️ एक्सेस वर्जित (Access Denied)</b>\n\n"
+            "यह बॉट केवल <b>अंकित कुमार</b> के लिए सुरक्षित है।\n"
+            "आप इसे इस्तेमाल नहीं कर सकते।",
+            parse_mode=enums.ParseMode.HTML
+        )
+        message.stop_propagation() 
 
 @BotInstance.on_message(filters.private & filters.incoming, group=-1)
 async def new_user_log(bot: Client, message: Message):
