@@ -148,7 +148,7 @@ async def owner_only_guard(bot: Client, message: Message):
     if message.from_user.id not in SUDO_USERS:
         await message.reply_text(
             "<b>⚠️ एक्सेस वर्जित (Access Denied)</b>\n\n"
-            "यह बॉट केवल <b>अंकित कुमार</b> के लिए सुरक्षित है।\n"
+            "यह बॉट केवल <b>itsnrcbot</b> के लिए सुरक्षित है।\n"
             "आप इसे इस्तेमाल नहीं कर सकते।",
             parse_mode=enums.ParseMode.HTML
         )
