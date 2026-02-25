@@ -115,9 +115,8 @@ class script(object):
 <b>⏳ ETA:</b> <code>{eta}</code>
 </blockquote>
 """
-    CAPTION = """<b><a href="itsnrcbot"></a>\n\n⚜️ Powered By : <a href="itsnrcbot">iamtghelp 😎</a>\n\nExtracted By : 𝐈𝐚𝐦𝐭𝐠𝐡𝐞𝐥𝐩</b>"""
-    LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded</b>"""
-
+    CAPTION = """<b><a href="itsnrcbot"></a></b>\n\n<b>⚜️ Powered By : <a href="itsnrcbot">iamtghelp 😎</a></b>"""
+    LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded</b>
 <b>Your 10 free saves for today have been used.</b>
 <i>Quota resets automatically after 24 hours from first download.</i>
 <blockquote><b>🔓 Upgrade to Premium for Unlimited Access!</b></blockquote>
@@ -460,122 +459,4 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
                 ph_path = await client.download_media(thumb_id, file_name=f"{temp_dir}/custom_thumb.jpg")
             except Exception as e:
                 logger.error(f"Failed to download custom thumb: {e}")
-        if not ph_path:
-            try:
-                if msg_type == "Video" and msg.video.thumbs:
-                    ph_path = await acc.download_media(msg.video.thumbs[0].file_id, file_name=f"{temp_dir}/thumb.jpg")
-                elif msg_type == "Document" and msg.document.thumbs:
-                    ph_path = await acc.download_media(msg.document.thumbs[0].file_id, file_name=f"{temp_dir}/thumb.jpg")
-            except:
-                pass
-        custom_caption = await db.get_caption(message.from_user.id)
-        if custom_caption:
-            final_caption = custom_caption.format(filename=file.split("/")[-1], size=humanbytes(file_size))
-        else:
-            final_caption = script.CAPTION.format(file_name=file.split("/")[-1])
-            if msg.caption:
-                final_caption += f"\n\n{msg.caption}"
-        if msg_type == "Document":
-            await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
-        elif msg_type == "Video":
-            await client.send_video(message.chat.id, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
-        elif msg_type == "Audio":
-            await client.send_audio(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
-        elif msg_type == "Photo":
-            await client.send_photo(message.chat.id, file, caption=final_caption)
-       
-    except Exception as e:
-         await smsg.edit(f"Upload Failed: {e}")
-    if os.path.exists(f'{message.id}upstatus.txt'): os.remove(f'{message.id}upstatus.txt')
-    if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
-    await client.delete_messages(message.chat.id, [smsg.id])
-@Client.on_callback_query()
-async def button_callbacks(client: Client, callback_query: CallbackQuery):
-    data = callback_query.data
-    message = callback_query.message
-    if not message: return
-   # --- DEVELOPER INFO ---
-    if data == "dev_info":
-        await callback_query.answer(
-            text=dev_text,
-            show_alert=True
-        )
-    elif data == "channels_info":
-        await callback_query.answer(
-            text=channels_text,
-            show_alert=True
-        )
-    elif data == "settings_btn":
-        await settings_panel(client, callback_query)
-    elif data == "buy_premium":
-        buttons = [
-            [InlineKeyboardButton("📸 Send Payment Proof", url="https://t.me/DmOwner")],
-            [InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]
-        ]
-        await client.edit_message_media(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            media=InputMediaPhoto(
-                media=SUBSCRIPTION,
-                caption=script.PREMIUM_TEXT.format(callback_query.from_user.mention, UPI_ID, QR_CODE)
-            ),
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-    elif data == "help_btn":
-        buttons = [[InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]]
-        await client.edit_message_caption(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            caption=script.HELP_TXT,
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode=enums.ParseMode.HTML
-        )
-  
-    elif data == "about_btn":
-        buttons = [[InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]]
-        await client.edit_message_caption(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            caption=script.ABOUT_TXT,
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode=enums.ParseMode.HTML
-        )
-    elif data == "start_btn":
-        bot = await client.get_me()
-        apis = ["https://api.waifu.pics/sfw/waifu", "https://nekos.life/api/v2/img/waifu"]
-        api_url = random.choice(apis)
-        try:
-            response = requests.get(api_url)
-            response.raise_for_status()
-            photo_url = response.json()["url"]
-        except Exception as e:
-            logger.error(f"Failed to fetch image from API: {e}")
-            photo_url = "https://i.postimg.cc/cC7txyhz/15.png"
-        buttons = [
-            [
-                InlineKeyboardButton("💎 Buy Premium", callback_data="buy_premium"),
-                InlineKeyboardButton("🆘 Help & Guide", callback_data="help_btn")
-            ],
-            [
-                InlineKeyboardButton("⚙️ Settings Panel", callback_data="settings_btn"),
-                InlineKeyboardButton("ℹ️ About Bot", callback_data="about_btn")
-            ],
-            [
-                InlineKeyboardButton('📢 Channels', callback_data="channels_info"),
-                InlineKeyboardButton('👨‍💻 Developers', callback_data="dev_info")
-            ]
-        ]
-        await client.edit_message_media(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            media=InputMediaPhoto(
-                media=photo_url,
-                caption=script.START_TXT.format(callback_query.from_user.mention, bot.username, bot.first_name)
-            ),
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-    elif data == "close_btn":
-        await message.delete()
-    elif data in ["cmd_list_btn", "user_stats_btn", "dump_chat_btn", "thumb_btn", "caption_btn"]:
-        pass
-    await callback_query.answer()
+        if not ph
