@@ -43,7 +43,7 @@ class Bot(Client):
             bot_token=BOT_TOKEN,
             plugins=dict(root="Rexbots"),
             workers=50,                      # यहाँ 10 से 50 कर दिया गया है
-            sleep_threshold=60,
+            sleep_threshold=15,
             max_concurrent_transmissions=15,  # यहाँ 5 से 15 कर दिया गया है
             ipv6=False,
             in_memory=True,                  # यहाँ False से True कर दिया गया है
