@@ -55,20 +55,22 @@ class script(object):
 <blockquote><b>1️⃣ Public Channels (No Login Required)</b></blockquote>
 • Forward or send the post link directly.
 • Compatible with any public channel or group.
-• <i>Example Link:</i> <code>https://t.me/channel/123</code>
+• <i>Example:</i> <code>https://t.me/channel/123</code>
+
 <blockquote><b>2️⃣ Private/Restricted Channels (Login Required)</b></blockquote>
-• Use <code>/login</code> to securely connect your Telegram account.
-• Send the private link (e.g., <code>t.me/c/123...</code>).
-• Bot accesses content using your authenticated session.
-<blockquote><b>3️⃣ Batch Downloading Mode</b></blockquote>
-• Initiate with <code>/batch</code> for multiple files.
-• Follow interactive prompts for seamless processing.
+• Use <code>/login</code> to connect your account.
+• Send private links (e.g., <code>t.me/c/123...</code>).
+
+<blockquote><b>3️⃣ Custom Caption & Clean Commands</b></blockquote>
+• <code>/replace 'पुराना' 'नया'</code> - शब्द या वाक्य बदलें
+• <code>/clear_replace</code> - सभी रिप्लेसमेंट साफ़ करें
+• <code>/prefix 'आपका टेक्स्ट'</code> - कैप्शन के ऊपर नाम जोड़ें
+• <code>/suffix 'आपका टेक्स्ट'</code> - कैप्शन के नीचे नाम जोड़ें
+• <code>/clean_ads</code> - अन्य चैनलों के लिंक व प्रोमो ऑटो-डिलीट करें
+
 <blockquote><b>🛑 Free User Limitations:</b></blockquote>
 • <b>Daily Quota:</b> 10 Files / 24 Hours
 • <b>File Size Cap:</b> 2GB Maximum
-<blockquote><b>💎 Premium Membership Benefits:</b></blockquote>
-• Unlimited Downloads & No Restrictions.
-• Priority Support & Advanced Features.
 """
     ABOUT_TXT = """<b>ℹ️ About This Bot</b>
 <blockquote><b>╭────[ 🧩 Technical Stack ]────⍟</b>
@@ -145,6 +147,9 @@ def TimeFormatter(milliseconds: int) -> str:
 
 class batch_temp(object):
     IS_BATCH = {}
+    USER_CLEAN_ADS = {}
+    USER_PREFIX = {}
+    USER_SUFFIX = {}
 
 def get_message_type(msg):
     if getattr(msg, 'document', None): return "Document"
@@ -157,6 +162,12 @@ def get_message_type(msg):
 async def apply_caption_replacements(user_id: int, caption: str) -> str:
     if not caption:
         return ""
+        
+    # Auto clean ads if enabled
+    if batch_temp.USER_CLEAN_ADS.get(user_id, False):
+        caption = re.sub(r'(https?://\S+|t\.me/\S+)', '', caption)
+        caption = re.sub(r'Join\s*:\s*@\S+', '', caption, flags=re.IGNORECASE)
+
     # Database replace words
     repl_words = await db.get_replace_words(user_id)
     if repl_words:
@@ -168,8 +179,17 @@ async def apply_caption_replacements(user_id: int, caption: str) -> str:
     if del_words:
         for del_w in del_words:
             caption = caption.replace(del_w, "")
+
+    # Prefix & Suffix addition
+    prefix = batch_temp.USER_PREFIX.get(user_id, "")
+    suffix = batch_temp.USER_SUFFIX.get(user_id, "")
+    
+    if prefix:
+        caption = f"{prefix}\n\n{caption}"
+    if suffix:
+        caption = f"{caption}\n\n{suffix}"
             
-    return caption
+    return caption.strip()
 
 async def downstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
@@ -241,7 +261,7 @@ def progress(current, total, message, type):
         except:
             pass
 
-# --- NEW EASY REPLACE COMMAND ---
+# --- CUSTOM COMMANDS ---
 @Client.on_message(filters.command(["replace", "r"]) & filters.private)
 async def easy_replace_command(client: Client, message: Message):
     try:
@@ -249,23 +269,57 @@ async def easy_replace_command(client: Client, message: Message):
         if len(args) < 3:
             return await message.reply_text(
                 "<b>📌 Replace Command Usage:</b>\n"
-                "<code>/replace 'Old Word/Sentence' 'New Word'</code>\n\n"
-                "<b>Examples:</b>\n"
-                "<code>/replace '𝐋𝐢𝐠𝐡𝐭𝐦𝐚𝐧' '𝐈𝐚𝐦𝐭𝐠𝐡𝐞𝐥𝐩'</code>\n"
-                "<code>/replace 'By: by: Paid Batch $' 'Extracted By: @iamtghelp'</code>\n"
-                "<code>/replace 'Trust🤝King👑' '@iamtghelp'</code>",
+                "<code>/replace 'Old Word' 'New Word'</code>",
                 parse_mode=enums.ParseMode.HTML
             )
         old_val = args[1]
         new_val = args[2]
         await db.set_replace_word(message.from_user.id, old_val, new_val)
         await message.reply_text(
-            f"<b>✅ Replacement Saved Successfully!</b>\n\n"
-            f"<code>{old_val}</code> ➔ <code>{new_val}</code>",
+            f"<b>✅ Replacement Saved:</b>\n<code>{old_val}</code> ➔ <code>{new_val}</code>",
             parse_mode=enums.ParseMode.HTML
         )
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}\nMake sure to close quotes (' ') properly.")
+        await message.reply_text(f"❌ Error: {e}")
+
+@Client.on_message(filters.command(["clear_replace", "reset_repl"]) & filters.private)
+async def clear_replace_command(client: Client, message: Message):
+    try:
+        await db.col.update_one({'id': message.from_user.id}, {'$set': {'replace_words': {}, 'delete_words': []}})
+        await message.reply_text("<b>🧹 सभी रिप्लेसमेंट साफ़ कर दिए गए हैं।</b>", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+@Client.on_message(filters.command(["clean_ads"]) & filters.private)
+async def toggle_clean_ads(client: Client, message: Message):
+    current = batch_temp.USER_CLEAN_ADS.get(message.from_user.id, False)
+    batch_temp.USER_CLEAN_ADS[message.from_user.id] = not current
+    status = "🟢 Enabled (विज्ञापनों को साफ़ किया जाएगा)" if not current else "🔴 Disabled"
+    await message.reply_text(f"<b>Ad/Link Cleaner:</b> {status}", parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["prefix"]) & filters.private)
+async def set_prefix(client: Client, message: Message):
+    try:
+        args = shlex.split(message.text)
+        if len(args) < 2:
+            batch_temp.USER_PREFIX[message.from_user.id] = ""
+            return await message.reply_text("<b>Prefix हटा दिया गया है।</b>", parse_mode=enums.ParseMode.HTML)
+        batch_temp.USER_PREFIX[message.from_user.id] = args[1]
+        await message.reply_text(f"<b>✅ Prefix सेट हुआ:</b>\n<code>{args[1]}</code>", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+@Client.on_message(filters.command(["suffix"]) & filters.private)
+async def set_suffix(client: Client, message: Message):
+    try:
+        args = shlex.split(message.text)
+        if len(args) < 2:
+            batch_temp.USER_SUFFIX[message.from_user.id] = ""
+            return await message.reply_text("<b>Suffix हटा दिया गया है।</b>", parse_mode=enums.ParseMode.HTML)
+        batch_temp.USER_SUFFIX[message.from_user.id] = args[1]
+        await message.reply_text(f"<b>✅ Suffix सेट हुआ:</b>\n<code>{args[1]}</code>", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
 
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
@@ -393,7 +447,7 @@ async def save(client: Client, message: Message):
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
            
-            # --- 1. PUBLIC CHANNEL: FAST COPY WITH REPLACED CAPTION ---
+            # --- 1. PUBLIC CHANNEL: FAST COPY ---
             if is_public_link:
                 username = datas[3]
                 try:
@@ -416,7 +470,7 @@ async def save(client: Client, message: Message):
                 except Exception as e:
                     logger.error(f"Public fast copy fallback: {e}")
 
-            # --- 2. PRIVATE / RESTRICTED CHANNEL HANDLING ---
+            # --- 2. PRIVATE / RESTRICTED CHANNEL ---
             user_data = await db.get_session(message.from_user.id)
             if user_data is None:
                 await message.reply(
@@ -541,7 +595,6 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             if msg.caption:
                 final_caption += f"\n\n{msg.caption}"
 
-        # Private download caption replacements
         final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
 
         if msg_type == "Document":
