@@ -19,6 +19,7 @@ from database.db import db
 import math
 from logger import LOGGER
 logger = LOGGER(__name__)
+
 SUBSCRIPTION = os.environ.get('SUBSCRIPTION', 'https://graph.org/file/242b7f1b52743938d81f1.jpg')
 FREE_LIMIT_SIZE = 2 * 1024 * 1024 * 1024
 FREE_LIMIT_DAILY = 10
@@ -343,10 +344,56 @@ async def save(client: Client, message: Message):
         batch_temp.IS_BATCH[message.from_user.id] = False
         is_private_link = "https://t.me/c/" in message.text
         is_batch = "https://t.me/b/" in message.text
+        is_public_link = not is_private_link and not is_batch
 
-        user_data = await db.get_session(message.from_user.id)
-        acc = None
-        if user_data:
+        for msgid in range(fromID, toID + 1):
+            if batch_temp.IS_BATCH.get(message.from_user.id):
+                break
+           
+            # --- पब्लिक लिंक के लिए फ़ास्ट कॉपी मोड (बिना डाउनलोड किए 1 सेकंड में) ---
+            if is_public_link:
+                username = datas[3]
+                try:
+                    orig_msg = await client.get_messages(username, msgid)
+                    final_caption = orig_msg.caption or ""
+                    
+                    # रिप्लेसमेंट लॉजिक
+                    repl_words = await db.get_replace_words(message.from_user.id)
+                    if repl_words and final_caption:
+                        for old_w, new_w in repl_words.items():
+                            final_caption = final_caption.replace(old_w, new_w)
+                    
+                    # डिलीट वर्ड लॉजिक
+                    del_words = await db.get_delete_words(message.from_user.id)
+                    if del_words and final_caption:
+                        for del_w in del_words:
+                            final_caption = final_caption.replace(del_w, "")
+
+                    # तुरंत कॉपी (एडिटेड कैप्शन के साथ)
+                    await client.copy_message(
+                        chat_id=message.chat.id,
+                        from_chat_id=username,
+                        message_id=msgid,
+                        caption=final_caption,
+                        reply_to_message_id=message.id
+                    )
+                    await db.add_traffic(message.from_user.id)
+                    await asyncio.sleep(1)
+                    continue
+                except Exception as e:
+                    logger.error(f"Fast copy failed, falling back: {e}")
+
+            # --- प्राइवेट और बैच लिंक के लिए प्रोसेस ---
+            user_data = await db.get_session(message.from_user.id)
+            if user_data is None:
+                await message.reply(
+                    "<b>🔒 Authentication Required</b>\n\n"
+                    "<i>Access to this content requires login.</i>\n"
+                    "<i>Use /login to securely authorize your account.</i>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+                batch_temp.IS_BATCH[message.from_user.id] = True
+                return
             try:
                 acc = Client(
                     "saverestricted",
@@ -358,32 +405,18 @@ async def save(client: Client, message: Message):
                 )
                 await acc.connect()
             except Exception as e:
-                acc = None
-
-        working_client = acc if acc else client
-
-        for msgid in range(fromID, toID + 1):
-            if batch_temp.IS_BATCH.get(message.from_user.id):
-                break
-           
+                batch_temp.IS_BATCH[message.from_user.id] = True
+                return await message.reply(f"<b>❌ Authentication Failed</b>\n\n<i>Your session may have expired. Please /logout and /login again.</i>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+            
             if is_private_link:
-                if not acc:
-                    await message.reply(
-                        "<b>🔒 Authentication Required</b>\n\n"
-                        "<i>Access to private content requires login.</i>\n"
-                        "<i>Use /login to securely authorize your account.</i>",
-                        parse_mode=enums.ParseMode.HTML
-                    )
-                    batch_temp.IS_BATCH[message.from_user.id] = True
-                    return
                 chatid = int("-100" + datas[4])
                 await handle_restricted_content(client, acc, message, chatid, msgid)
             elif is_batch:
                 username = datas[4]
-                await handle_restricted_content(client, working_client, message, username, msgid)
+                await handle_restricted_content(client, acc, message, username, msgid)
             else:
                 username = datas[3]
-                await handle_restricted_content(client, working_client, message, username, msgid)
+                await handle_restricted_content(client, acc, message, username, msgid)
             await asyncio.sleep(2)
             
         batch_temp.IS_BATCH[message.from_user.id] = True
@@ -482,18 +515,16 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             if msg.caption:
                 final_caption += f"\n\n{msg.caption}"
 
-        # रिप्लेसमेंट और डिलीट लॉजिक (पब्लिक और प्राइवेट दोनों के लिए)
+        # रिप्लेसमेंट और डिलीट लॉजिक
         repl_words = await db.get_replace_words(message.from_user.id)
-        if repl_words:
+        if repl_words and final_caption:
             for old_word, new_word in repl_words.items():
-                if final_caption:
-                    final_caption = final_caption.replace(old_word, new_word)
+                final_caption = final_caption.replace(old_word, new_word)
         
         del_words = await db.get_delete_words(message.from_user.id)
-        if del_words:
+        if del_words and final_caption:
             for d_word in del_words:
-                if final_caption:
-                    final_caption = final_caption.replace(d_word, "")
+                final_caption = final_caption.replace(d_word, "")
 
         if msg_type == "Document":
             await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
@@ -550,7 +581,6 @@ async def button_callbacks(client: Client, callback_query: CallbackQuery):
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=enums.ParseMode.HTML
         )
-  
     elif data == "about_btn":
         buttons = [[InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]]
         await client.edit_message_caption(
