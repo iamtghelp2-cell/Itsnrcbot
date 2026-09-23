@@ -1,6 +1,6 @@
 # Rexbots
 # Don't Remove Credit
-# Telegram Channel @iamtghelp
+# Telegram Channel @RexBots_Official
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -32,7 +32,7 @@ async def rem_del_word(client: Client, message: Message):
 
 # Rexbots
 # Don't Remove Credit
-# Telegram Channel @iamtghelp
+# Telegram Channel @RexBots_Official
 
 @Client.on_message(filters.command("set_repl_word") & filters.private)
 async def set_repl_word(client: Client, message: Message):
