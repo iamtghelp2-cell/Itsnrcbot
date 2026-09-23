@@ -1,6 +1,8 @@
 # Developed by: LastPerson07 × RexBots
 # Telegram: @RexBots_Official | @THEUPDATEDGUYS
 import os
+import re
+import shlex
 import asyncio
 import random
 import time
@@ -40,7 +42,6 @@ dev_text = "👨‍💻 Mind Behind This Bot:\n• @iamtghelp"
 channels_text = "📢 Official Channels:\n• @iamtghelp\n\nStay updated for new features!"
 
 class script(object):
-   
     START_TXT = """<b>👋 Hello {},</b>
 <b>🤖 I am <a href=https://t.me/{}>{}</a></b>
 <i>Your Professional Restricted Content Saver Bot.</i>
@@ -153,6 +154,23 @@ def get_message_type(msg):
     if getattr(msg, 'text', None): return "Text"
     return None
 
+async def apply_caption_replacements(user_id: int, caption: str) -> str:
+    if not caption:
+        return ""
+    # Database replace words
+    repl_words = await db.get_replace_words(user_id)
+    if repl_words:
+        for old_w, new_w in repl_words.items():
+            caption = caption.replace(old_w, new_w)
+            
+    # Database delete words
+    del_words = await db.get_delete_words(user_id)
+    if del_words:
+        for del_w in del_words:
+            caption = caption.replace(del_w, "")
+            
+    return caption
+
 async def downstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
         await asyncio.sleep(3)
@@ -222,6 +240,32 @@ def progress(current, total, message, type):
                 progress.cache.pop(task_id, None)
         except:
             pass
+
+# --- NEW EASY REPLACE COMMAND ---
+@Client.on_message(filters.command(["replace", "r"]) & filters.private)
+async def easy_replace_command(client: Client, message: Message):
+    try:
+        args = shlex.split(message.text)
+        if len(args) < 3:
+            return await message.reply_text(
+                "<b>📌 Replace Command Usage:</b>\n"
+                "<code>/replace 'Old Word/Sentence' 'New Word'</code>\n\n"
+                "<b>Examples:</b>\n"
+                "<code>/replace '𝐋𝐢𝐠𝐡𝐭𝐦𝐚𝐧' '𝐈𝐚𝐦𝐭𝐠𝐡𝐞𝐥𝐩'</code>\n"
+                "<code>/replace 'By: by: Paid Batch $' 'Extracted By: @iamtghelp'</code>\n"
+                "<code>/replace 'Trust🤝King👑' '@iamtghelp'</code>",
+                parse_mode=enums.ParseMode.HTML
+            )
+        old_val = args[1]
+        new_val = args[2]
+        await db.set_replace_word(message.from_user.id, old_val, new_val)
+        await message.reply_text(
+            f"<b>✅ Replacement Saved Successfully!</b>\n\n"
+            f"<code>{old_val}</code> ➔ <code>{new_val}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}\nMake sure to close quotes (' ') properly.")
 
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
@@ -319,7 +363,6 @@ async def settings_panel(client, callback_query):
 @Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
 async def save(client: Client, message: Message):
     if "https://t.me/" in message.text:
-       
         is_limit_reached = await db.check_limit(message.from_user.id)
         if is_limit_reached:
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Upgrade to Premium", callback_data="buy_premium")]])
@@ -350,26 +393,16 @@ async def save(client: Client, message: Message):
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
            
-            # --- पब्लिक लिंक के लिए फ़ास्ट कॉपी मोड (बिना डाउनलोड किए 1 सेकंड में) ---
+            # --- 1. PUBLIC CHANNEL: FAST COPY WITH REPLACED CAPTION ---
             if is_public_link:
                 username = datas[3]
                 try:
                     orig_msg = await client.get_messages(username, msgid)
                     final_caption = orig_msg.caption or ""
                     
-                    # रिप्लेसमेंट लॉजिक
-                    repl_words = await db.get_replace_words(message.from_user.id)
-                    if repl_words and final_caption:
-                        for old_w, new_w in repl_words.items():
-                            final_caption = final_caption.replace(old_w, new_w)
-                    
-                    # डिलीट वर्ड लॉजिक
-                    del_words = await db.get_delete_words(message.from_user.id)
-                    if del_words and final_caption:
-                        for del_w in del_words:
-                            final_caption = final_caption.replace(del_w, "")
+                    if final_caption:
+                        final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
 
-                    # तुरंत कॉपी (एडिटेड कैप्शन के साथ)
                     await client.copy_message(
                         chat_id=message.chat.id,
                         from_chat_id=username,
@@ -381,9 +414,9 @@ async def save(client: Client, message: Message):
                     await asyncio.sleep(1)
                     continue
                 except Exception as e:
-                    logger.error(f"Fast copy failed, falling back: {e}")
+                    logger.error(f"Public fast copy fallback: {e}")
 
-            # --- प्राइवेट और बैच लिंक के लिए प्रोसेस ---
+            # --- 2. PRIVATE / RESTRICTED CHANNEL HANDLING ---
             user_data = await db.get_session(message.from_user.id)
             if user_data is None:
                 await message.reply(
@@ -452,14 +485,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
     if msg_type == "Text":
         try:
             text_content = msg.text or ""
-            repl_words = await db.get_replace_words(message.from_user.id)
-            if repl_words:
-                for k, v in repl_words.items():
-                    text_content = text_content.replace(k, v)
-            del_words = await db.get_delete_words(message.from_user.id)
-            if del_words:
-                for word in del_words:
-                    text_content = text_content.replace(word, "")
+            text_content = await apply_caption_replacements(message.from_user.id, text_content)
             await client.send_message(message.chat.id, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
             return
         except:
@@ -515,16 +541,8 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             if msg.caption:
                 final_caption += f"\n\n{msg.caption}"
 
-        # रिप्लेसमेंट और डिलीट लॉजिक
-        repl_words = await db.get_replace_words(message.from_user.id)
-        if repl_words and final_caption:
-            for old_word, new_word in repl_words.items():
-                final_caption = final_caption.replace(old_word, new_word)
-        
-        del_words = await db.get_delete_words(message.from_user.id)
-        if del_words and final_caption:
-            for d_word in del_words:
-                final_caption = final_caption.replace(d_word, "")
+        # Private download caption replacements
+        final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
 
         if msg_type == "Document":
             await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
