@@ -19,7 +19,9 @@ class Database:
             session = None,
             daily_usage = 0,
             limit_reset_time = None,
-            is_premium = True # नए जुड़ने वाले सभी यूजर्स को डिफ़ॉल्ट प्रीमियम बना दिया
+            is_premium = True,
+            delete_words = [],
+            replace_words = {}
         )
    
     async def add_user(self, id, name):
@@ -47,7 +49,7 @@ class Database:
 
     async def get_session(self, id):
         user = await self.col.find_one({'id': int(id)})
-        return user.get('session')
+        return user.get('session') if user else None
 
     # Caption Support
     async def set_caption(self, id, caption):
@@ -55,7 +57,7 @@ class Database:
 
     async def get_caption(self, id):
         user = await self.col.find_one({'id': int(id)})
-        return user.get('caption', None)
+        return user.get('caption', None) if user else None
 
     async def del_caption(self, id):
         await self.col.update_one({'id': int(id)}, {'$unset': {'caption': ""}})
@@ -66,7 +68,7 @@ class Database:
 
     async def get_thumbnail(self, id):
         user = await self.col.find_one({'id': int(id)})
-        return user.get('thumbnail', None)
+        return user.get('thumbnail', None) if user else None
 
     async def del_thumbnail(self, id):
         await self.col.update_one({'id': int(id)}, {'$unset': {'thumbnail': ""}})
@@ -88,7 +90,6 @@ class Database:
         logger.info(f"User {id} removed from premium")
 
     async def check_premium(self, id):
-        # हर यूजर को प्रीमियम दिखाने के लिए हमेशा True जैसा रिस्पॉन्स
         return True 
 
     async def get_premium_users(self):
@@ -108,19 +109,41 @@ class Database:
         if not user: return False
         return user.get('is_banned', False)
 
-    # --------------------------------------------------------
-    # FIXED: No More Limits
-    # --------------------------------------------------------
+    # Delete Words Support
+    async def set_delete_words(self, id, words):
+        await self.col.update_one({'id': int(id)}, {'$addToSet': {'delete_words': {'$each': words}}}, upsert=True)
+
+    async def get_delete_words(self, id):
+        user = await self.col.find_one({'id': int(id)})
+        return user.get('delete_words', []) if user else []
+
+    async def remove_delete_words(self, id, words):
+        await self.col.update_one({'id': int(id)}, {'$pull': {'delete_words': {'$in': words}}})
+
+    # Replace Words Support
+    async def set_replace_words(self, id, replace_dict):
+        # dot (.) वाले शब्दों को सही से MongoDB में स्टोर करने का सुरक्षित तरीका
+        user = await self.col.find_one({'id': int(id)})
+        current = user.get('replace_words', {}) if user else {}
+        current.update(replace_dict)
+        await self.col.update_one({'id': int(id)}, {'$set': {'replace_words': current}}, upsert=True)
+
+    async def get_replace_words(self, id):
+        user = await self.col.find_one({'id': int(id)})
+        return user.get('replace_words', {}) if user else {}
+
+    async def remove_replace_words(self, id, targets):
+        user = await self.col.find_one({'id': int(id)})
+        current = user.get('replace_words', {}) if user else {}
+        for target in targets:
+            current.pop(target, None)
+        await self.col.update_one({'id': int(id)}, {'$set': {'replace_words': current}})
+
+    # Limits Support
     async def check_limit(self, id):
-        """
-        हमेशा False रिटर्न करेगा ताकि लिमिट का एरर कभी न आए।
-        """
-        return False # यहाँ बदलाव किया गया है
+        return False
 
     async def add_traffic(self, id):
-        """
-        ट्रैफिक काउंट करने की अब ज़रूरत नहीं है।
-        """
-        pass # अब कोई लिमिट नहीं बढ़ेगी
+        pass
 
 db = Database(DB_URI, DB_NAME)
