@@ -35,17 +35,8 @@ REACTIONS = [
     "😡"
 ]
 
-
-dev_text = "👨‍💻 Mind Behind This Bot:\n• @DmOwner\n• @akaza7902"
-expected_dev_hash = "b9e63b7578bdec13f3cb3162fe5f5e93dccaba3bfd5c8ddacbb90ffdcdcce402"
-channels_text = "📢 Official Channels:\n• @ReX_update\n• @THEUPDATEDGUYS\n\nStay updated for new features!"
-expected_channels_hash = "e19212e571bd0f6626450dd790029d392c0748c554d4b386a0c0752f4148d37d"
-
-if (
-    hashlib.sha256(dev_text.encode('utf-8')).hexdigest() != expected_dev_hash or
-    hashlib.sha256(channels_text.encode('utf-8')).hexdigest() != expected_channels_hash
-):
-    raise Exception("Tampered developer info detected! Bot will not start. Fuck the code - crashing now.")
+dev_text = "👨‍💻 Mind Behind This Bot:\n• @iamtghelp"
+channels_text = "📢 Official Channels:\n• @iamtghelp\n\nStay updated for new features!"
 
 class script(object):
    
@@ -80,7 +71,7 @@ class script(object):
     ABOUT_TXT = """<b>ℹ️ About This Bot</b>
 <blockquote><b>╭────[ 🧩 Technical Stack ]────⍟</b>
 <b>├⍟ 🤖 Bot Name : <a href=http://t.me/THEUPDATEDGUYS_Bot>Save Content</a></b>
-<b>├⍟ 👨‍💻 Developer : <a href=https://t.me/DmOwner>Ⓜ️ark X Rexbots</a></b>
+<b>├⍟ 👨‍💻 Developer : <a href=https://t.me/iamtghelp>iamtghelp</a></b>
 <b>├⍟ 📚 Library : <a href='https://docs.pyrogram.org/'>Pyrogram Async</a></b>
 <b>├⍟ 🐍 Language : <a href='https://www.python.org/'>Python 3.11+</a></b>
 <b>├⍟ 🗄 Database : <a href='https://www.mongodb.com/'>MongoDB Atlas Cluster</a></b>
@@ -127,6 +118,7 @@ Remove all restrictions and enjoy seamless downloading.
 <blockquote><b>🔓 Upgrade to Premium</b></blockquote>
 Download files up to 4GB and beyond with no limits!
 """
+
 def humanbytes(size):
     if not size:
         return "0B"
@@ -137,6 +129,7 @@ def humanbytes(size):
         size /= power
         n += 1
     return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
+
 def TimeFormatter(milliseconds: int) -> str:
     seconds, milliseconds = divmod(int(milliseconds), 1000)
     minutes, seconds = divmod(seconds, 60)
@@ -147,8 +140,10 @@ def TimeFormatter(milliseconds: int) -> str:
         ((str(minutes) + "m, ") if minutes else "") + \
         ((str(seconds) + "s, ") if seconds else "")
     return tmp[:-2] if tmp else "0s"
+
 class batch_temp(object):
     IS_BATCH = {}
+
 def get_message_type(msg):
     if getattr(msg, 'document', None): return "Document"
     if getattr(msg, 'video', None): return "Video"
@@ -156,6 +151,7 @@ def get_message_type(msg):
     if getattr(msg, 'audio', None): return "Audio"
     if getattr(msg, 'text', None): return "Text"
     return None
+
 async def downstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
         await asyncio.sleep(3)
@@ -167,6 +163,7 @@ async def downstatus(client, statusfile, message, chat):
             await asyncio.sleep(5)
         except:
             await asyncio.sleep(5)
+
 async def upstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
         await asyncio.sleep(3)
@@ -178,6 +175,7 @@ async def upstatus(client, statusfile, message, chat):
             await asyncio.sleep(5)
         except:
             await asyncio.sleep(5)
+
 def progress(current, total, message, type):
     if batch_temp.IS_BATCH.get(message.from_user.id):
         raise Exception("Cancelled")
@@ -223,6 +221,7 @@ def progress(current, total, message, type):
                 progress.cache.pop(task_id, None)
         except:
             pass
+
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
     if not await db.is_user_exist(message.from_user.id):
@@ -264,6 +263,7 @@ async def send_start(client: Client, message: Message):
         reply_to_message_id=message.id,
         parse_mode=enums.ParseMode.HTML
     )
+
 @Client.on_message(filters.command(["help"]))
 async def send_help(client: Client, message: Message):
     buttons = [[InlineKeyboardButton("❌ Close Menu", callback_data="close_btn")]]
@@ -273,10 +273,11 @@ async def send_help(client: Client, message: Message):
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=enums.ParseMode.HTML
     )
+
 @Client.on_message(filters.command(["plan", "myplan", "premium"]))
 async def send_plan(client: Client, message: Message):
     buttons = [
-        [InlineKeyboardButton("📸 Send Payment Proof", url="https://t.me/DmOwner")],
+        [InlineKeyboardButton("📸 Send Payment Proof", url="https://t.me/iamtghelp")],
         [InlineKeyboardButton("❌ Close Menu", callback_data="close_btn")]
     ]
     await client.send_photo(
@@ -286,14 +287,13 @@ async def send_plan(client: Client, message: Message):
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=enums.ParseMode.HTML
     )
+
 @Client.on_message(filters.command(["cancel"]))
 async def send_cancel(client: Client, message: Message):
     batch_temp.IS_BATCH[message.from_user.id] = True
     await message.reply_text("❌ Batch Process Cancelled Successfully.")
+
 async def settings_panel(client, callback_query):
-    """
-    Renders the Settings Menu with professional layout.
-    """
     user_id = callback_query.from_user.id
     is_premium = await db.check_premium(user_id)
     badge = "💎 Premium Member" if is_premium else "👤 Standard User"
@@ -314,6 +314,7 @@ async def settings_panel(client, callback_query):
         reply_markup=buttons,
         parse_mode=enums.ParseMode.HTML
     )
+
 @Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
 async def save(client: Client, message: Message):
     if "https://t.me/" in message.text:
@@ -330,6 +331,7 @@ async def save(client: Client, message: Message):
        
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
+        
         datas = message.text.split("/")
         temp = datas[-1].replace("?single", "").split("-")
         fromID = int(temp[0].strip())
@@ -337,39 +339,14 @@ async def save(client: Client, message: Message):
             toID = int(temp[1].strip())
         except:
             toID = fromID
+            
         batch_temp.IS_BATCH[message.from_user.id] = False
         is_private_link = "https://t.me/c/" in message.text
         is_batch = "https://t.me/b/" in message.text
-        is_public_link = not is_private_link and not is_batch
-        for msgid in range(fromID, toID + 1):
-           
-            if batch_temp.IS_BATCH.get(message.from_user.id):
-                break
-           
-            if is_public_link:
-                username = datas[3]
-                try:
-                    await client.copy_message(
-                        chat_id=message.chat.id,
-                        from_chat_id=username,
-                        message_id=msgid,
-                        reply_to_message_id=message.id
-                    )
-                    await db.add_traffic(message.from_user.id)
-                    await asyncio.sleep(1)
-                    continue
-                except Exception as e:
-                    pass
-            user_data = await db.get_session(message.from_user.id)
-            if user_data is None:
-                await message.reply(
-                    "<b>🔒 Authentication Required</b>\n\n"
-                    "<i>Access to this content requires login.</i>\n"
-                    "<i>Use /login to securely authorize your account.</i>",
-                    parse_mode=enums.ParseMode.HTML
-                )
-                batch_temp.IS_BATCH[message.from_user.id] = True
-                return
+
+        user_data = await db.get_session(message.from_user.id)
+        acc = None
+        if user_data:
             try:
                 acc = Client(
                     "saverestricted",
@@ -381,19 +358,36 @@ async def save(client: Client, message: Message):
                 )
                 await acc.connect()
             except Exception as e:
-                batch_temp.IS_BATCH[message.from_user.id] = True
-                return await message.reply(f"<b>❌ Authentication Failed</b>\n\n<i>Your session may have expired. Please /logout and /login again.</i>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+                acc = None
+
+        working_client = acc if acc else client
+
+        for msgid in range(fromID, toID + 1):
+            if batch_temp.IS_BATCH.get(message.from_user.id):
+                break
+           
             if is_private_link:
+                if not acc:
+                    await message.reply(
+                        "<b>🔒 Authentication Required</b>\n\n"
+                        "<i>Access to private content requires login.</i>\n"
+                        "<i>Use /login to securely authorize your account.</i>",
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    batch_temp.IS_BATCH[message.from_user.id] = True
+                    return
                 chatid = int("-100" + datas[4])
                 await handle_restricted_content(client, acc, message, chatid, msgid)
             elif is_batch:
                 username = datas[4]
-                await handle_restricted_content(client, acc, message, username, msgid)
+                await handle_restricted_content(client, working_client, message, username, msgid)
             else:
                 username = datas[3]
-                await handle_restricted_content(client, acc, message, username, msgid)
+                await handle_restricted_content(client, working_client, message, username, msgid)
             await asyncio.sleep(2)
+            
         batch_temp.IS_BATCH[message.from_user.id] = True
+
 async def handle_restricted_content(client: Client, acc, message: Message, chat_target, msgid):
     try:
         msg: Message = await acc.get_messages(chat_target, msgid)
@@ -421,20 +415,23 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
                 parse_mode=enums.ParseMode.HTML
             )
             return
+
     if msg_type == "Text":
         try:
-            # टेक्स्ट मैसेज में भी रिप्लेस और डिलीट वर्ड लागू करें
             text_content = msg.text or ""
             repl_words = await db.get_replace_words(message.from_user.id)
-            for k, v in repl_words.items():
-                text_content = text_content.replace(k, v)
+            if repl_words:
+                for k, v in repl_words.items():
+                    text_content = text_content.replace(k, v)
             del_words = await db.get_delete_words(message.from_user.id)
-            for word in del_words:
-                text_content = text_content.replace(word, "")
+            if del_words:
+                for word in del_words:
+                    text_content = text_content.replace(word, "")
             await client.send_message(message.chat.id, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
             return
         except:
             return
+
     await db.add_traffic(message.from_user.id)
     smsg = await client.send_message(message.chat.id, '<b>⬇️ Starting Download...</b>', reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
    
@@ -456,6 +453,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
             return await smsg.edit("❌ **Task Cancelled**")
         return await smsg.delete()
+
     try:
         asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, message.chat.id))
        
@@ -475,6 +473,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
                     ph_path = await acc.download_media(msg.document.thumbs[0].file_id, file_name=f"{temp_dir}/thumb.jpg")
             except:
                 pass
+
         custom_caption = await db.get_caption(message.from_user.id)
         if custom_caption:
             final_caption = custom_caption.format(filename=file.split("/")[-1], size=humanbytes(file_size))
@@ -483,7 +482,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             if msg.caption:
                 final_caption += f"\n\n{msg.caption}"
 
-        # --- वर्ड रिप्लेसमेंट और डिलीट लॉजिक यहाँ जोड़ा गया है ---
+        # रिप्लेसमेंट और डिलीट लॉजिक (पब्लिक और प्राइवेट दोनों के लिए)
         repl_words = await db.get_replace_words(message.from_user.id)
         if repl_words:
             for old_word, new_word in repl_words.items():
@@ -495,7 +494,6 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             for d_word in del_words:
                 if final_caption:
                     final_caption = final_caption.replace(d_word, "")
-        # -----------------------------------------------------
 
         if msg_type == "Document":
             await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
@@ -511,12 +509,12 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
     if os.path.exists(f'{message.id}upstatus.txt'): os.remove(f'{message.id}upstatus.txt')
     if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
     await client.delete_messages(message.chat.id, [smsg.id])
+
 @Client.on_callback_query()
 async def button_callbacks(client: Client, callback_query: CallbackQuery):
     data = callback_query.data
     message = callback_query.message
     if not message: return
-   # --- DEVELOPER INFO ---
     if data == "dev_info":
         await callback_query.answer(
             text=dev_text,
@@ -531,7 +529,7 @@ async def button_callbacks(client: Client, callback_query: CallbackQuery):
         await settings_panel(client, callback_query)
     elif data == "buy_premium":
         buttons = [
-            [InlineKeyboardButton("📸 Send Payment Proof", url="https://t.me/DmOwner")],
+            [InlineKeyboardButton("📸 Send Payment Proof", url="https://t.me/iamtghelp")],
             [InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]
         ]
         await client.edit_message_media(
