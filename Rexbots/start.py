@@ -423,7 +423,15 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             return
     if msg_type == "Text":
         try:
-            await client.send_message(message.chat.id, msg.text, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
+            # टेक्स्ट मैसेज में भी रिप्लेस और डिलीट वर्ड लागू करें
+            text_content = msg.text or ""
+            repl_words = await db.get_replace_words(message.from_user.id)
+            for k, v in repl_words.items():
+                text_content = text_content.replace(k, v)
+            del_words = await db.get_delete_words(message.from_user.id)
+            for word in del_words:
+                text_content = text_content.replace(word, "")
+            await client.send_message(message.chat.id, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
             return
         except:
             return
@@ -474,6 +482,21 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             final_caption = script.CAPTION.format(file_name=file.split("/")[-1])
             if msg.caption:
                 final_caption += f"\n\n{msg.caption}"
+
+        # --- वर्ड रिप्लेसमेंट और डिलीट लॉजिक यहाँ जोड़ा गया है ---
+        repl_words = await db.get_replace_words(message.from_user.id)
+        if repl_words:
+            for old_word, new_word in repl_words.items():
+                if final_caption:
+                    final_caption = final_caption.replace(old_word, new_word)
+        
+        del_words = await db.get_delete_words(message.from_user.id)
+        if del_words:
+            for d_word in del_words:
+                if final_caption:
+                    final_caption = final_caption.replace(d_word, "")
+        # -----------------------------------------------------
+
         if msg_type == "Document":
             await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Video":
