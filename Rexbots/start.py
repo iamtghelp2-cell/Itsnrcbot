@@ -52,12 +52,12 @@ class script(object):
 <b>👇 Select an Option Below to Get Started:</b>
 """
     HELP_TXT = """<b>📚 Comprehensive Help & User Guide</b>
-<blockquote><b>1️⃣ Public Channels (No Login Required)</b></blockquote>
+<blockquote><b>1️⃣ Public Channels & Groups (No Login Required)</b></blockquote>
 • Forward or send the post link directly.
 • Compatible with any public channel or group.
 • <i>Example:</i> <code>https://t.me/channel/123</code>
 
-<blockquote><b>2️⃣ Private/Restricted Channels (Login Required)</b></blockquote>
+<blockquote><b>2️⃣ Private/Restricted Channels & Groups (Login Required)</b></blockquote>
 • Use <code>/login</code> to connect your account.
 • Send private links (e.g., <code>t.me/c/123...</code>).
 
@@ -70,7 +70,7 @@ class script(object):
 
 <blockquote><b>4️⃣ Dump Chat Commands</b></blockquote>
 • <code>/setchat -100xxxxxxxxxx</code> - चैनल में ऑटो-फॉरवर्ड सेट करें
-• <code>/clearchat</code> - चैनल फॉरवर्डिंग बंद करके वापस DM में फ़ाइलें मंगाएं
+• <code>/clearchat</code> - चैनल फॉरवर्डिंग बंद करके वापस DM में मंगाएं
 
 <blockquote><b>🛑 Free User Limitations:</b></blockquote>
 • <b>Daily Quota:</b> 10 Files / 24 Hours
@@ -190,6 +190,39 @@ async def apply_caption_replacements(user_id: int, caption: str) -> str:
         caption = f"{caption}\n\n{suffix}"
             
     return caption.strip()
+
+async def rewrite_text_and_links(client: Client, text_content: str, entities, destination_chat: int, user_id: int):
+    """पब्लिक/प्राइवेट चैनल या ग्रुप के सभी लिंक को आपके टारगेट चैनल के लिंक से बदलने वाला इंजन"""
+    if not text_content:
+        return "", []
+    
+    text_content = await apply_caption_replacements(user_id, text_content)
+    
+    try:
+        dest_chat_obj = await client.get_chat(destination_chat)
+        if dest_chat_obj.username:
+            my_base_link = f"https://t.me/{dest_chat_obj.username}"
+        else:
+            clean_dest_id = str(destination_chat).replace("-100", "")
+            my_base_link = f"https://t.me/c/{clean_dest_id}"
+            
+        # 1. टेक्स्ट में सीधे लिखे लिंक्स को बदलें
+        text_content = re.sub(r'https?://t\.me/(?:c/\d+|[a-zA-Z0-9_]+)/(\d+)', rf'{my_base_link}/\1', text_content)
+        text_content = re.sub(r'https?://t\.me/(?:joinchat/|\+)?([a-zA-Z0-9_]+)', my_base_link, text_content)
+
+        # 2. टेक्स्ट के अंदर छुपे हुए नीले हाइपरलिंक्स (Entities) को बदलें
+        if entities:
+            for ent in entities:
+                if ent.type == enums.MessageEntityType.TEXT_LINK and ent.url:
+                    post_match = re.search(r'/(\d+)$', ent.url)
+                    if post_match:
+                        ent.url = f"{my_base_link}/{post_match.group(1)}"
+                    else:
+                        ent.url = my_base_link
+    except Exception as e:
+        logger.error(f"Error redirecting universal links: {e}")
+
+    return text_content, entities
 
 async def downstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
@@ -357,7 +390,7 @@ async def reset_my_dump_chat(client: Client, message: Message):
     try:
         await db.del_dump_chat(message.from_user.id)
         await message.reply_text(
-            "<b>✅ चैनल फॉरवर्डिंग पूरी तरह बंद कर दी गई है!</b>\n\n<i>अब से सभी वीडियो और पीडीएफ सिर्फ आपके इसी बॉट (DM) में आएँगे।</i>",
+            "<b>✅ चैनल/ग्रुप फॉरवर्डिंग पूरी तरह बंद कर दी गई है!</b>\n\n<i>अब से सभी वीडियो और पीडीएफ सिर्फ आपके इसी बॉट (DM) में आएँगे।</i>",
             parse_mode=enums.ParseMode.HTML
         )
     except Exception as e:
@@ -472,7 +505,7 @@ async def save(client: Client, message: Message):
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
         
-        # Check Dump Chat
+        # Check Dump Chat Target
         dump_chat = await db.get_dump_chat(message.from_user.id)
         destination_chat = dump_chat if dump_chat else message.chat.id
         
@@ -493,29 +526,49 @@ async def save(client: Client, message: Message):
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
            
-            # --- 1. PUBLIC CHANNEL: FAST COPY ---
+            # --- 1. PUBLIC CHANNEL / GROUP: LINK REWRITE & SEND ---
             if is_public_link:
                 username = datas[3]
                 try:
                     orig_msg = await client.get_messages(username, msgid)
-                    final_caption = orig_msg.caption or ""
                     
-                    if final_caption:
-                        final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
+                    # अगर टेक्स्ट या इंडेक्स मैसेज है:
+                    if orig_msg.text:
+                        text_content = orig_msg.text
+                        entities = orig_msg.entities
+                        
+                        if destination_chat != message.chat.id:
+                            text_content, entities = await rewrite_text_and_links(
+                                client, text_content, entities, destination_chat, message.from_user.id
+                            )
+                        else:
+                            text_content = await apply_caption_replacements(message.from_user.id, text_content)
 
-                    await client.copy_message(
-                        chat_id=destination_chat,
-                        from_chat_id=username,
-                        message_id=msgid,
-                        caption=final_caption
-                    )
+                        await client.send_message(
+                            chat_id=destination_chat,
+                            text=text_content,
+                            entities=entities,
+                            parse_mode=None
+                        )
+                    else:
+                        # अगर वीडियो/फोटो/डॉक्यूमेंट है:
+                        final_caption = orig_msg.caption or ""
+                        if final_caption:
+                            final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
+
+                        await client.copy_message(
+                            chat_id=destination_chat,
+                            from_chat_id=username,
+                            message_id=msgid,
+                            caption=final_caption
+                        )
                     await db.add_traffic(message.from_user.id)
                     await asyncio.sleep(1)
                     continue
                 except Exception as e:
-                    logger.error(f"Public fast copy fallback: {e}")
+                    logger.error(f"Public Link Copy Fallback: {e}")
 
-            # --- 2. PRIVATE / RESTRICTED CHANNEL ---
+            # --- 2. PRIVATE / RESTRICTED CHANNEL / GROUP ---
             user_data = await db.get_session(message.from_user.id)
             if user_data is None:
                 await message.reply(
@@ -585,47 +638,19 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
     if msg_type == "Text":
         try:
             text_content = msg.text or ""
-            text_content = await apply_caption_replacements(message.from_user.id, text_content)
+            entities = msg.entities
             
             if destination_chat != message.chat.id:
-                try:
-                    dest_chat_obj = await client.get_chat(destination_chat)
-                    if dest_chat_obj.username:
-                        my_base_link = f"https://t.me/{dest_chat_obj.username}"
-                    else:
-                        clean_dest_id = str(destination_chat).replace("-100", "")
-                        my_base_link = f"https://t.me/c/{clean_dest_id}"
-
-                    # 1. Plain Text URLs replacement
-                    text_content = re.sub(
-                        r'https?://t\.me/(?:c/\d+|[a-zA-Z0-9_]+)/(\d+)',
-                        rf'{my_base_link}/\1',
-                        text_content
-                    )
-                    text_content = re.sub(
-                        r'https?://t\.me/(?:joinchat/|\+)?([a-zA-Z0-9_]+)',
-                        my_base_link,
-                        text_content
-                    )
-
-                    # 2. Hidden Blue Hyperlinks replacement
-                    if msg.entities:
-                        for entity in msg.entities:
-                            if entity.type == enums.MessageEntityType.TEXT_LINK and entity.url:
-                                post_match = re.search(r'/(\d+)$', entity.url)
-                                if post_match:
-                                    post_number = post_match.group(1)
-                                    entity.url = f"{my_base_link}/{post_number}"
-                                else:
-                                    entity.url = my_base_link
-
-                except Exception as universal_err:
-                    logger.error(f"Universal Link Replace Error: {universal_err}")
+                text_content, entities = await rewrite_text_and_links(
+                    client, text_content, entities, destination_chat, message.from_user.id
+                )
+            else:
+                text_content = await apply_caption_replacements(message.from_user.id, text_content)
 
             await client.send_message(
                 destination_chat, 
                 text_content, 
-                entities=msg.entities, 
+                entities=entities, 
                 parse_mode=None
             )
             return
