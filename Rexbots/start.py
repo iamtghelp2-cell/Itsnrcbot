@@ -68,9 +68,9 @@ class script(object):
 • <code>/suffix 'आपका टेक्स्ट'</code> - कैप्शन के नीचे नाम जोड़ें
 • <code>/clean_ads</code> - अन्य चैनलों के लिंक व प्रोमो ऑटो-डिलीट करें
 
-<blockquote><b>4️⃣ Forward / Dump Chat Commands</b></blockquote>
+<blockquote><b>4️⃣ Dump Chat Commands</b></blockquote>
 • <code>/setchat -100xxxxxxxxxx</code> - चैनल में ऑटो-फॉरवर्ड सेट करें
-• <code>/setchat clear</code> - फॉरवर्ड बंद करें और वापस DM में मंगाएं
+• <code>/clearchat</code> - चैनल फॉरवर्डिंग बंद करके वापस DM में फ़ाइलें मंगाएं
 
 <blockquote><b>🛑 Free User Limitations:</b></blockquote>
 • <b>Daily Quota:</b> 10 Files / 24 Hours
@@ -167,24 +167,20 @@ async def apply_caption_replacements(user_id: int, caption: str) -> str:
     if not caption:
         return ""
         
-    # Auto clean ads if enabled
     if batch_temp.USER_CLEAN_ADS.get(user_id, False):
         caption = re.sub(r'(https?://\S+|t\.me/\S+)', '', caption)
         caption = re.sub(r'Join\s*:\s*@\S+', '', caption, flags=re.IGNORECASE)
 
-    # Database replace words
     repl_words = await db.get_replace_words(user_id)
     if repl_words:
         for old_w, new_w in repl_words.items():
             caption = caption.replace(old_w, new_w)
             
-    # Database delete words
     del_words = await db.get_delete_words(user_id)
     if del_words:
         for del_w in del_words:
             caption = caption.replace(del_w, "")
 
-    # Prefix & Suffix addition
     prefix = batch_temp.USER_PREFIX.get(user_id, "")
     suffix = batch_temp.USER_SUFFIX.get(user_id, "")
     
@@ -325,7 +321,7 @@ async def set_suffix(client: Client, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-# --- DUMP CHAT / FORWARD COMMAND ---
+# --- DUMP CHAT & CLEAR COMMANDS ---
 @Client.on_message(filters.command(["setchat"]) & filters.private)
 async def set_dump_chat_command(client: Client, message: Message):
     args = message.text.split()
@@ -334,7 +330,7 @@ async def set_dump_chat_command(client: Client, message: Message):
             "<b>🗑 Set Dump Chat</b>\n\n"
             "<b>Usage:</b>\n"
             "<code>/setchat &lt;chat_id&gt;</code> ➔ Set forward destination\n"
-            "<code>/setchat clear</code> ➔ Remove dump chat\n\n"
+            "<code>/clearchat</code> ➔ Remove dump chat\n\n"
             "<i>Example:</i> <code>/setchat -1001234567890</code>",
             parse_mode=enums.ParseMode.HTML
         )
@@ -355,6 +351,17 @@ async def set_dump_chat_command(client: Client, message: Message):
         )
     except Exception as e:
         await message.reply_text(f"<b>❌ Unable to Access Chat</b>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["clearchat", "reset_chat"]) & filters.private)
+async def reset_my_dump_chat(client: Client, message: Message):
+    try:
+        await db.del_dump_chat(message.from_user.id)
+        await message.reply_text(
+            "<b>✅ चैनल फॉरवर्डिंग पूरी तरह बंद कर दी गई है!</b>\n\n<i>अब से सभी वीडियो और पीडीएफ सिर्फ आपके इसी बॉट (DM) में आएँगे।</i>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
 
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
@@ -465,7 +472,7 @@ async def save(client: Client, message: Message):
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
         
-        # Check Target Destination Chat
+        # Check Dump Chat
         dump_chat = await db.get_dump_chat(message.from_user.id)
         destination_chat = dump_chat if dump_chat else message.chat.id
         
@@ -574,13 +581,56 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             )
             return
 
+    # --- TEXT & INDEX MESSAGE PROCESSING (UNIVERSAL LINK REDIRECTION) ---
     if msg_type == "Text":
         try:
             text_content = msg.text or ""
             text_content = await apply_caption_replacements(message.from_user.id, text_content)
-            await client.send_message(destination_chat, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
+            
+            if destination_chat != message.chat.id:
+                try:
+                    dest_chat_obj = await client.get_chat(destination_chat)
+                    if dest_chat_obj.username:
+                        my_base_link = f"https://t.me/{dest_chat_obj.username}"
+                    else:
+                        clean_dest_id = str(destination_chat).replace("-100", "")
+                        my_base_link = f"https://t.me/c/{clean_dest_id}"
+
+                    # 1. Plain Text URLs replacement
+                    text_content = re.sub(
+                        r'https?://t\.me/(?:c/\d+|[a-zA-Z0-9_]+)/(\d+)',
+                        rf'{my_base_link}/\1',
+                        text_content
+                    )
+                    text_content = re.sub(
+                        r'https?://t\.me/(?:joinchat/|\+)?([a-zA-Z0-9_]+)',
+                        my_base_link,
+                        text_content
+                    )
+
+                    # 2. Hidden Blue Hyperlinks replacement
+                    if msg.entities:
+                        for entity in msg.entities:
+                            if entity.type == enums.MessageEntityType.TEXT_LINK and entity.url:
+                                post_match = re.search(r'/(\d+)$', entity.url)
+                                if post_match:
+                                    post_number = post_match.group(1)
+                                    entity.url = f"{my_base_link}/{post_number}"
+                                else:
+                                    entity.url = my_base_link
+
+                except Exception as universal_err:
+                    logger.error(f"Universal Link Replace Error: {universal_err}")
+
+            await client.send_message(
+                destination_chat, 
+                text_content, 
+                entities=msg.entities, 
+                parse_mode=None
+            )
             return
-        except:
+        except Exception as e:
+            logger.error(f"Error sending text content: {e}")
             return
 
     await db.add_traffic(message.from_user.id)
