@@ -68,6 +68,10 @@ class script(object):
 • <code>/suffix 'आपका टेक्स्ट'</code> - कैप्शन के नीचे नाम जोड़ें
 • <code>/clean_ads</code> - अन्य चैनलों के लिंक व प्रोमो ऑटो-डिलीट करें
 
+<blockquote><b>4️⃣ Forward / Dump Chat Commands</b></blockquote>
+• <code>/setchat -100xxxxxxxxxx</code> - चैनल में ऑटो-फॉरवर्ड सेट करें
+• <code>/setchat clear</code> - फॉरवर्ड बंद करें और वापस DM में मंगाएं
+
 <blockquote><b>🛑 Free User Limitations:</b></blockquote>
 • <b>Daily Quota:</b> 10 Files / 24 Hours
 • <b>File Size Cap:</b> 2GB Maximum
@@ -274,7 +278,7 @@ async def easy_replace_command(client: Client, message: Message):
             )
         old_val = args[1]
         new_val = args[2]
-        await db.set_replace_word(message.from_user.id, old_val, new_val)
+        await db.set_replace_words(message.from_user.id, {old_val: new_val})
         await message.reply_text(
             f"<b>✅ Replacement Saved:</b>\n<code>{old_val}</code> ➔ <code>{new_val}</code>",
             parse_mode=enums.ParseMode.HTML
@@ -320,6 +324,37 @@ async def set_suffix(client: Client, message: Message):
         await message.reply_text(f"<b>✅ Suffix सेट हुआ:</b>\n<code>{args[1]}</code>", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
+
+# --- DUMP CHAT / FORWARD COMMAND ---
+@Client.on_message(filters.command(["setchat"]) & filters.private)
+async def set_dump_chat_command(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply_text(
+            "<b>🗑 Set Dump Chat</b>\n\n"
+            "<b>Usage:</b>\n"
+            "<code>/setchat &lt;chat_id&gt;</code> ➔ Set forward destination\n"
+            "<code>/setchat clear</code> ➔ Remove dump chat\n\n"
+            "<i>Example:</i> <code>/setchat -1001234567890</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    target = args[1].strip()
+    if target.lower() == "clear":
+        await db.del_dump_chat(message.from_user.id)
+        return await message.reply_text("<b>✅ Dump Chat साफ़ कर दी गई है। अब सभी फ़ाइलें इसी चैट (DM) में आएँगी।</b>", parse_mode=enums.ParseMode.HTML)
+    
+    try:
+        chat_id = int(target)
+        chat = await client.get_chat(chat_id)
+        await db.set_dump_chat(message.from_user.id, chat_id)
+        await message.reply_text(
+            f"<b>✅ Dump Chat Set Successfully</b>\n\n"
+            f"<b>Forward To:</b> <code>{chat_id}</code>\n"
+            f"<b>Title:</b> <code>{chat.title}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    except Exception as e:
+        await message.reply_text(f"<b>❌ Unable to Access Chat</b>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
@@ -430,6 +465,10 @@ async def save(client: Client, message: Message):
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
         
+        # Check Target Destination Chat
+        dump_chat = await db.get_dump_chat(message.from_user.id)
+        destination_chat = dump_chat if dump_chat else message.chat.id
+        
         datas = message.text.split("/")
         temp = datas[-1].replace("?single", "").split("-")
         fromID = int(temp[0].strip())
@@ -458,11 +497,10 @@ async def save(client: Client, message: Message):
                         final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
 
                     await client.copy_message(
-                        chat_id=message.chat.id,
+                        chat_id=destination_chat,
                         from_chat_id=username,
                         message_id=msgid,
-                        caption=final_caption,
-                        reply_to_message_id=message.id
+                        caption=final_caption
                     )
                     await db.add_traffic(message.from_user.id)
                     await asyncio.sleep(1)
@@ -497,18 +535,18 @@ async def save(client: Client, message: Message):
             
             if is_private_link:
                 chatid = int("-100" + datas[4])
-                await handle_restricted_content(client, acc, message, chatid, msgid)
+                await handle_restricted_content(client, acc, message, chatid, msgid, destination_chat)
             elif is_batch:
                 username = datas[4]
-                await handle_restricted_content(client, acc, message, username, msgid)
+                await handle_restricted_content(client, acc, message, username, msgid, destination_chat)
             else:
                 username = datas[3]
-                await handle_restricted_content(client, acc, message, username, msgid)
+                await handle_restricted_content(client, acc, message, username, msgid, destination_chat)
             await asyncio.sleep(2)
             
         batch_temp.IS_BATCH[message.from_user.id] = True
 
-async def handle_restricted_content(client: Client, acc, message: Message, chat_target, msgid):
+async def handle_restricted_content(client: Client, acc, message: Message, chat_target, msgid, destination_chat):
     try:
         msg: Message = await acc.get_messages(chat_target, msgid)
     except Exception as e:
@@ -540,7 +578,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         try:
             text_content = msg.text or ""
             text_content = await apply_caption_replacements(message.from_user.id, text_content)
-            await client.send_message(message.chat.id, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
+            await client.send_message(destination_chat, text_content, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
             return
         except:
             return
@@ -598,13 +636,13 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         final_caption = await apply_caption_replacements(message.from_user.id, final_caption)
 
         if msg_type == "Document":
-            await client.send_document(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
+            await client.send_document(destination_chat, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Video":
-            await client.send_video(message.chat.id, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
+            await client.send_video(destination_chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Audio":
-            await client.send_audio(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
+            await client.send_audio(destination_chat, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Photo":
-            await client.send_photo(message.chat.id, file, caption=final_caption)
+            await client.send_photo(destination_chat, file, caption=final_caption)
        
     except Exception as e:
          await smsg.edit(f"Upload Failed: {e}")
