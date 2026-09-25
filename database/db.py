@@ -21,7 +21,8 @@ class Database:
             limit_reset_time = None,
             is_premium = True,
             delete_words = [],
-            replace_words = {}
+            replace_words = {},
+            dump_chat = None
         )
    
     async def add_user(self, id, name):
@@ -50,6 +51,24 @@ class Database:
     async def get_session(self, id):
         user = await self.col.find_one({'id': int(id)})
         return user.get('session') if user else None
+
+    # Dump Chat Support (यहाँ नया कोड जोड़ा गया है)
+    async def set_dump_chat(self, id, chat_id):
+        await self.col.update_one(
+            {'id': int(id)}, 
+            {'$set': {'dump_chat': int(chat_id)}}, 
+            upsert=True
+        )
+
+    async def get_dump_chat(self, id):
+        user = await self.col.find_one({'id': int(id)})
+        return user.get('dump_chat', None) if user else None
+
+    async def del_dump_chat(self, id):
+        await self.col.update_one(
+            {'id': int(id)}, 
+            {'$unset': {'dump_chat': ""}}
+        )
 
     # Caption Support
     async def set_caption(self, id, caption):
@@ -122,7 +141,6 @@ class Database:
 
     # Replace Words Support
     async def set_replace_words(self, id, replace_dict):
-        # dot (.) वाले शब्दों को सही से MongoDB में स्टोर करने का सुरक्षित तरीका
         user = await self.col.find_one({'id': int(id)})
         current = user.get('replace_words', {}) if user else {}
         current.update(replace_dict)
