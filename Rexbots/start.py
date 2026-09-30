@@ -1,5 +1,5 @@
 # Developed by: LastPerson07 × RexBots
-# Optimized for: Unlimited Fast Topic Forwarding & Zero Delay
+# Optimized for: Unlimited Fast Multi-Topic Forwarding & Keyword Smart Router
 import os
 import re
 import shlex
@@ -35,19 +35,26 @@ class script(object):
 <i>Your High-Speed Restricted Content Saver & Topic Router Bot.</i>
 <blockquote><b>🚀 System Status: 🟢 Online (Unlimited Mode)</b>
 <b>⚡ Performance: Ultra-Fast Server-Side Cloning</b>
-<b>🎯 Topic Routing: Fully Enabled</b>
+<b>🎯 Auto Topic Routing: Fully Enabled</b>
 <b>📊 Quota: No Limits (Unlimited Access)</b></blockquote>
 <b>👇 नीचे दिए गए मेन्यू से अपनी सेटिंग्स मैनेज करें:</b>
 """
     HELP_TXT = """<b>📚 सम्पूर्ण कमांड और उपयोग गाइड:</b>
 
-<blockquote><b>🎯 1. टॉपिक और ग्रुप फॉरवर्डिंग (Topic Routing):</b></blockquote>
+<blockquote><b>🎯 1. टॉपिक और ग्रुप फॉरवर्डिंग (Smart Routing):</b></blockquote>
 • <code>/setchat -100xxxxxxxxxx</code> - अपना टारगेट सुपरग्रुप सेट करें
 • <code>/clearchat</code> - फॉरवर्डिंग बंद करें (फाइलें बॉट DM में आएँगी)
 • <code>/settopic &lt;topic_id&gt;</code> - डिफ़ॉल्ट टॉपिक ID सेट करें
-• <code>/map_topic &lt;source_topic&gt; &lt;your_topic&gt;</code> - विषय अनुसार टॉपिक मैच करें
+• <code>/set_topics</code> - एक बार में सभी विषयों के लिंक सेट करें (नीचे उदाहरण देखें)
 • <code>/show_topics</code> - एक्टिव टॉपिक लिस्ट देखें
 • <code>/reset_topics</code> - सभी टॉपिक मैपिंग साफ़ करें
+
+<blockquote><b>📝 /set_topics का सही फॉर्मेट:</b></blockquote>
+<code>/set_topics
+Maths: https://t.me/c/3635348530/7
+Reasoning: https://t.me/c/3635348530/8
+Polity: https://t.me/c/3635348530/11
+Current Affairs: https://t.me/c/3635348530/4</code>
 
 <blockquote><b>⚙️ 2. ऑटो क्लीनर व कैप्शन:</b></blockquote>
 • <code>/setting</code> - पूरा इनलाइन सेटिंग्स डैशबोर्ड खोलें
@@ -77,8 +84,9 @@ class batch_temp(object):
     USER_CLEAN_ADS = {}
     USER_PREFIX = {}
     USER_SUFFIX = {}
-    USER_TOPIC_MAP = {}      # {user_id: {source_topic_id: target_topic_id}}
-    USER_DEFAULT_TOPIC = {}  # {user_id: default_topic_id}
+    USER_TOPIC_MAP = {}       # {user_id: {source_topic_id: target_topic_id}}
+    USER_KEYWORD_MAP = {}     # {user_id: {subject_keyword: target_topic_id}}
+    USER_DEFAULT_TOPIC = {}   # {user_id: default_topic_id}
 
 def get_message_type(msg):
     if getattr(msg, 'document', None): return "Document"
@@ -87,6 +95,29 @@ def get_message_type(msg):
     if getattr(msg, 'audio', None): return "Audio"
     if getattr(msg, 'text', None): return "Text"
     return None
+
+def detect_target_topic(user_id: int, msg: Message, source_topic: int = None) -> int:
+    # 1. सीधे ID मैपिंग की जाँच (/map_topic)
+    if source_topic:
+        mapped_id = batch_temp.USER_TOPIC_MAP.get(user_id, {}).get(source_topic)
+        if mapped_id:
+            return mapped_id
+
+    # 2. कैप्शन / फ़ाइलनेम / टेक्स्ट से कीवर्ड मैचिंग (/set_topics)
+    keyword_map = batch_temp.USER_KEYWORD_MAP.get(user_id, {})
+    if keyword_map:
+        searchable_text = (msg.caption or msg.text or "").lower()
+        if msg.video and getattr(msg.video, 'file_name', None):
+            searchable_text += " " + msg.video.file_name.lower()
+        elif msg.document and getattr(msg.document, 'file_name', None):
+            searchable_text += " " + msg.document.file_name.lower()
+
+        for kw, target_id in keyword_map.items():
+            if re.search(r'\b' + re.escape(kw) + r'\b', searchable_text, re.IGNORECASE) or kw in searchable_text:
+                return target_id
+
+    # 3. डिफ़ॉल्ट टॉपिक
+    return batch_temp.USER_DEFAULT_TOPIC.get(user_id, None)
 
 async def apply_caption_replacements(user_id: int, caption: str) -> str:
     if not caption: return ""
@@ -138,6 +169,42 @@ async def rewrite_text_and_links(client: Client, text_content: str, entities, de
 
 # --- TOPIC ROUTING COMMANDS ---
 
+@Client.on_message(filters.command(["set_topics"]) & filters.private)
+async def set_topics_bulk_cmd(client: Client, message: Message):
+    text = message.text.replace("/set_topics", "").strip()
+    if not text:
+        return await message.reply_text(
+            "<b>📌 Topic Setup Format:</b>\n\n"
+            "<code>/set_topics\n"
+            "Maths: https://t.me/c/3635348530/7\n"
+            "Reasoning: https://t.me/c/3635348530/8\n"
+            "Polity: https://t.me/c/3635348530/11\n"
+            "Current Affairs: https://t.me/c/3635348530/4</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    
+    mapping = {}
+    lines = text.split("\n")
+    for line in lines:
+        if ":" in line:
+            parts = line.split(":", 1)
+            name = parts[0].strip().lower()
+            link = parts[1].strip()
+            match = re.search(r"/(\d+)$", link)
+            if match:
+                topic_id = int(match.group(1))
+                mapping[name] = topic_id
+
+    if not mapping:
+        return await message.reply_text("❌ कोई मान्य टॉपिक लिंक नहीं मिला। सही प्रारूप में भेजें।")
+
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = mapping
+    
+    out = "<b>✅ सभी विषय और उनके टॉपिक ID सफलतापूर्वक सेट हो गए:</b>\n\n"
+    for name, t_id in mapping.items():
+        out += f"• <b>{name.title()}</b> ➔ Topic ID: <code>{t_id}</code>\n"
+    await message.reply_text(out, parse_mode=enums.ParseMode.HTML)
+
 @Client.on_message(filters.command(["map_topic"]) & filters.private)
 async def map_topic_cmd(client: Client, message: Message):
     args = message.text.split()
@@ -145,7 +212,7 @@ async def map_topic_cmd(client: Client, message: Message):
         return await message.reply_text(
             "<b>📌 Topic Map Usage:</b>\n"
             "<code>/map_topic &lt;सामने_का_topic_id&gt; &lt;आपका_topic_id&gt;</code>\n\n"
-            "<i>उदा:</i> <code>/map_topic 4 15</code> (Hindi के लिए)",
+            "<i>उदा:</i> <code>/map_topic 4 15</code>",
             parse_mode=enums.ParseMode.HTML
         )
     try:
@@ -163,18 +230,35 @@ async def map_topic_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command(["show_topics"]) & filters.private)
 async def show_topics_cmd(client: Client, message: Message):
-    mapping = batch_temp.USER_TOPIC_MAP.get(message.from_user.id, {})
-    if not mapping:
-        return await message.reply_text("ℹ️ अभी कोई टॉपिक मैप नहीं किया गया है।")
-    out = "<b>📋 आपकी एक्टिव टॉपिक मैपिंग:</b>\n\n"
-    for s, t in mapping.items():
-        out += f"• स्रोत <code>{s}</code> ➔ आपका टॉपिक <code>{t}</code>\n"
+    kw_mapping = batch_temp.USER_KEYWORD_MAP.get(message.from_user.id, {})
+    id_mapping = batch_temp.USER_TOPIC_MAP.get(message.from_user.id, {})
+    default_top = batch_temp.USER_DEFAULT_TOPIC.get(message.from_user.id, "सेट नहीं")
+
+    out = f"<b>📋 आपकी एक्टिव टॉपिक सेटिंग्स:</b>\n\n"
+    out += f"<b>डिफ़ॉल्ट टॉपिक:</b> <code>{default_top}</code>\n\n"
+
+    if kw_mapping:
+        out += "<b>🔸 ऑटो-कीवर्ड विषय:</b>\n"
+        for s, t in kw_mapping.items():
+            out += f"• {s.title()} ➔ Topic ID: <code>{t}</code>\n"
+        out += "\n"
+
+    if id_mapping:
+        out += "<b>🔸 डायरेक्ट ID मैपिंग:</b>\n"
+        for s, t in id_mapping.items():
+            out += f"• स्रोत ID <code>{s}</code> ➔ आपका Topic ID: <code>{t}</code>\n"
+
+    if not kw_mapping and not id_mapping:
+        out += "<i>ℹ️ अभी कोई कस्टम टॉपिक सेट नहीं है।</i>"
+
     await message.reply_text(out, parse_mode=enums.ParseMode.HTML)
 
 @Client.on_message(filters.command(["reset_topics"]) & filters.private)
 async def reset_topics_cmd(client: Client, message: Message):
     batch_temp.USER_TOPIC_MAP[message.from_user.id] = {}
-    await message.reply_text("🧹 <b>सभी टॉपिक मैपिंग साफ़ कर दी गई हैं।</b>", parse_mode=enums.ParseMode.HTML)
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = {}
+    batch_temp.USER_DEFAULT_TOPIC.pop(message.from_user.id, None)
+    await message.reply_text("🧹 <b>सभी टॉपिक मैपिंग और कीवर्ड्स साफ़ कर दिए गए हैं।</b>", parse_mode=enums.ParseMode.HTML)
 
 @Client.on_message(filters.command(["settopic"]) & filters.private)
 async def set_default_topic(client: Client, message: Message):
@@ -282,6 +366,7 @@ async def reset_my_dump_chat(client: Client, message: Message):
     await db.del_dump_chat(message.from_user.id)
     batch_temp.USER_DEFAULT_TOPIC.pop(message.from_user.id, None)
     batch_temp.USER_TOPIC_MAP[message.from_user.id] = {}
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = {}
     await message.reply_text("✅ <b>ग्रुप फॉरवर्डिंग बंद कर दी गई है! फाइलें अब पर्सनल चैट में आएँगी।</b>", parse_mode=enums.ParseMode.HTML)
 
 @Client.on_message(filters.command(["start"]))
@@ -367,11 +452,9 @@ async def save(client: Client, message: Message):
             if not msg or msg.empty or not get_message_type(msg):
                 continue
 
-            # 1. टॉपिक पहचानना
+            # 1. ऑटोमैटिक टॉपिक पहचान (Keyword + Mapping + Default)
             source_topic = getattr(msg, "message_thread_id", None)
-            target_topic = batch_temp.USER_TOPIC_MAP.get(message.from_user.id, {}).get(source_topic)
-            if not target_topic:
-                target_topic = batch_temp.USER_DEFAULT_TOPIC.get(message.from_user.id, None)
+            target_topic = detect_target_topic(message.from_user.id, msg, source_topic)
 
             # 2. टेक्स्ट और इंडेक्स मैसेज
             msg_type = get_message_type(msg)
