@@ -4,15 +4,12 @@ import os
 import re
 import math
 import time
-import shlex
 import asyncio
-import random
 import shutil
-import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
-from config import API_ID, API_HASH
+from config import API_ID, API_HASH, BOT_TOKEN
 from database.db import db
 from logger import LOGGER
 
@@ -22,7 +19,13 @@ SUBSCRIPTION = os.environ.get('SUBSCRIPTION', 'https://graph.org/file/242b7f1b52
 UPI_ID = os.environ.get("UPI_ID", "your_upi@oksbi")
 QR_CODE = os.environ.get("QR_CODE", "https://graph.org/file/242b7f1b52743938d81f1.jpg")
 
-REACTIONS = ["👍", "❤️", "🔥", "🥰", "👏", "😁", "🎉", "🤩", "⚡", "💯"]
+# मुख्य बोट क्लाइंट इनिशियलाइज़ेशन
+app = Client(
+    "Itsnrcbot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
 class script(object):
     START_TXT = """<b>👋 Hello {},</b>
@@ -69,7 +72,6 @@ def time_formatter(milliseconds: int) -> str:
         ((str(seconds) + "s") if seconds else "")
     return tmp or "0s"
 
-# --- लाइव प्रोग्रेस बार मैनेजर ---
 async def progress_for_pyrogram(current, total, ud_type, message: Message, start_time):
     now = time.time()
     diff = now - start_time
@@ -84,8 +86,8 @@ async def progress_for_pyrogram(current, total, ud_type, message: Message, start
         estimated_total_time_str = time_formatter(estimated_total_time)
 
         progress = "[{0}{1}] \n<b>Progress:</b> {2}%\n".format(
-            ''.join(["▰" for i in range(math.floor(percentage / 10))]),
-            ''.join(["▱" for i in range(10 - math.floor(percentage / 10))]),
+            ''.join(["▰" for _ in range(math.floor(percentage / 10))]),
+            ''.join(["▱" for _ in range(10 - math.floor(percentage / 10))]),
             round(percentage, 2))
 
         tmp = progress + "<b>Processed:</b> {0} of {1}\n<b>Speed:</b> {2}/s\n<b>ETA:</b> {3}\n".format(
@@ -165,16 +167,26 @@ async def apply_caption_replacements(user_id: int, caption: str) -> str:
     if suffix: caption = f"{caption}\n\n{suffix}"
     return caption.strip()
 
-# --- TOPIC ROUTING COMMANDS ---
-@Client.on_message(filters.command(["set_topics"]) & filters.private)
+@app.on_message(filters.command(["start"]))
+async def start_cmd(client: Client, message: Message):
+    bot = await client.get_me()
+    await message.reply_text(
+        script.START_TXT.format(message.from_user.mention, bot.username, bot.first_name),
+        parse_mode=enums.ParseMode.HTML
+    )
+
+@app.on_message(filters.command(["help"]))
+async def help_cmd(client: Client, message: Message):
+    await message.reply_text(script.HELP_TXT, parse_mode=enums.ParseMode.HTML)
+
+@app.on_message(filters.command(["set_topics"]) & filters.private)
 async def set_topics_bulk_cmd(client: Client, message: Message):
     text = message.text.replace("/set_topics", "").strip()
     if not text:
         return await message.reply_text("<b>फॉर्मेट:</b>\n<code>/set_topics\nMaths: https://t.me/c/123/7\nReasoning: https://t.me/c/123/8</code>", parse_mode=enums.ParseMode.HTML)
     
     mapping = {}
-    lines = text.split("\n")
-    for line in lines:
+    for line in text.splitlines():
         if ":" in line:
             parts = line.split(":", 1)
             name = parts[0].strip().lower()
@@ -189,7 +201,7 @@ async def set_topics_bulk_cmd(client: Client, message: Message):
         out += f"• <b>{name.title()}</b> ➔ ID: <code>{t_id}</code>\n"
     await message.reply_text(out, parse_mode=enums.ParseMode.HTML)
 
-@Client.on_message(filters.command(["setchat"]) & filters.private)
+@app.on_message(filters.command(["setchat"]) & filters.private)
 async def set_dump_chat_command(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return await message.reply_text("<code>/setchat -100xxxxxxxxxx</code>")
@@ -201,13 +213,13 @@ async def set_dump_chat_command(client: Client, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-@Client.on_message(filters.command(["cancel"]))
+@app.on_message(filters.command(["cancel"]))
 async def send_cancel(client: Client, message: Message):
     batch_temp.IS_BATCH[message.from_user.id] = True
     await message.reply_text("🛑 <b>टास्क तुरंत रोक दिया गया।</b>", parse_mode=enums.ParseMode.HTML)
 
-# --- MAIN FORWARDING ENGINE WITH LIVE SCREEN PROGRESS ---
-@Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
+# --- मुख्य फॉरवर्डिंग इंजन ---
+@app.on_message(filters.text & filters.private & ~filters.regex("^/"))
 async def save(client: Client, message: Message):
     if "https://t.me/" not in message.text: return
 
@@ -217,7 +229,7 @@ async def save(client: Client, message: Message):
     dump_chat = await db.get_dump_chat(message.from_user.id)
     destination_chat = dump_chat if dump_chat else message.chat.id
 
-    # URL Parser (हर तरह के लिंक के लिए)
+    # मजबूत लिंक पार्सर
     clean_text = message.text.strip().split("?")[0].replace("?single", "")
     parts = [p for p in clean_text.split("/") if p]
     last_seg = parts[-1].strip()
@@ -230,7 +242,11 @@ async def save(client: Client, message: Message):
         toID = fromID
 
     is_private_link = "t.me/c/" in clean_text
-    chat_target = int("-100" + parts[parts.index("c") + 1]) if is_private_link else parts[3]
+    if is_private_link:
+        c_index = parts.index("c")
+        chat_target = int("-100" + parts[c_index + 1])
+    else:
+        chat_target = parts[2] if parts[1] == "t.me" else parts[3]
 
     batch_temp.IS_BATCH[message.from_user.id] = False
     acc = None
@@ -274,24 +290,21 @@ async def save(client: Client, message: Message):
                 kw["message_thread_id"] = target_topic
 
             copied = False
-            # 1. सुपरफास्ट डायरेक्ट क्लोन (1 सेकंड)
             if acc:
                 try:
-                    sent = await acc.copy_message(**kw)
+                    await acc.copy_message(**kw)
                     copied = True
                 except Exception: pass
             if not copied:
                 try:
-                    sent = await client.copy_message(**kw)
+                    await client.copy_message(**kw)
                     copied = True
                 except Exception: pass
 
-            # 2. अगर फाइल रेस्ट्रिक्टेड है -> स्क्रीन पर लाइव प्रतिशत के साथ डाउनलोड और अपलोड
             if not copied:
                 temp_dir = f"downloads/{message.id}_{msgid}"
                 os.makedirs(temp_dir, exist_ok=True)
                 try:
-                    # डाउनलोड प्रोग्रेस
                     d_start = time.time()
                     file = await sender_app.download_media(
                         msg,
@@ -304,7 +317,6 @@ async def save(client: Client, message: Message):
                     if target_topic and destination_chat != message.chat.id:
                         send_kw["message_thread_id"] = target_topic
 
-                    # अपलोड प्रोग्रेस
                     u_start = time.time()
                     u_args = ("📤 <b>अपलोड हो रहा है...</b>", prog_msg, u_start)
 
@@ -328,6 +340,11 @@ async def save(client: Client, message: Message):
             logger.error(f"Error on msg {msgid}: {err}")
             await asyncio.sleep(1)
 
-    await prog_msg.edit_text("✅ <b>सभी फाइलें सफलतापूर्वक प्रोसेस हो गईं!</b>", parse_mode=enums.ParseMode.HTML)
+    await prog_msg.edit_text("✅ <b>सभी फाइलें प्रोसेस हो गईं!</b>", parse_mode=enums.ParseMode.HTML)
     if acc: await acc.disconnect()
     batch_temp.IS_BATCH[message.from_user.id] = True
+
+# --- सबसे ज़रूरी लाइन: बोट को 24 घंटे चालू रखने के लिए ---
+if __name__ == "__main__":
+    print("🚀 Bot Started Successfully!")
+    app.run()
