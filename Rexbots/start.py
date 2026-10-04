@@ -1,622 +1,554 @@
-cat << 'EOF' > Rexbots/start.py
 # Developed by: LastPerson07 × RexBots
-# Topic Router + Persistent User Login + Restricted Content Saver
+# Optimized for: Unlimited Fast Multi-Topic Forwarding & Keyword Smart Router
 import os
 import re
-import json
-import time
+import shlex
 import asyncio
+import random
+import time
 import shutil
-import unicodedata
-
+import pyrogram
+import requests
 from pyrogram import Client, filters, enums
-from pyrogram.errors import FloodWait, SessionPasswordNeeded, PhoneCodeInvalid, PhoneCodeExpired, PasswordHashInvalid
-from pyrogram.types import Message
-
-from config import API_ID, API_HASH, BOT_TOKEN
+from pyrogram.errors import (
+    FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant,
+    InviteHashExpired, UsernameNotOccupied, AuthKeyUnregistered
+)
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, InputMediaPhoto
+from config import API_ID, API_HASH
 from database.db import db
 from logger import LOGGER
 
 logger = LOGGER(__name__)
 
-HTML = enums.ParseMode.HTML
-ENABLE_LIMIT = os.environ.get("ENABLE_LIMIT", "0") == "1"
-SETTINGS_FILE = os.environ.get("SETTINGS_FILE", "user_settings.json")
+SUBSCRIPTION = os.environ.get('SUBSCRIPTION', 'https://graph.org/file/242b7f1b52743938d81f1.jpg')
+UPI_ID = os.environ.get("UPI_ID", "your_upi@oksbi")
+QR_CODE = os.environ.get("QR_CODE", "https://graph.org/file/242b7f1b52743938d81f1.jpg")
 
-RUNNING = set()
-CANCEL = set()
-LOGIN_STEPS = {}  # temporary login state
+REACTIONS = [
+    "👍", "❤️", "🔥", "🥰", "👏", "😁", "🎉", "🤩", "⚡", "💯"
+]
 
-app = Client(
-    "Itsnrcbot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+class script(object):
+    START_TXT = """<b>👋 Hello {},</b>
+<b>🤖 I am <a href=https://t.me/{}>{}</a></b>
+<i>Your High-Speed Restricted Content Saver & Topic Router Bot.</i>
+<blockquote><b>🚀 System Status: 🟢 Online (Unlimited Mode)</b>
+<b>⚡ Performance: Ultra-Fast Server-Side Cloning</b>
+<b>🎯 Auto Topic Routing: Fully Enabled</b>
+<b>📊 Quota: No Limits (Unlimited Access)</b></blockquote>
+<b>👇 नीचे दिए गए मेन्यू से अपनी सेटिंग्स मैनेज करें:</b>
+"""
+    HELP_TXT = """<b>📚 सम्पूर्ण कमांड और उपयोग गाइड:</b>
 
-def _default_settings():
-    return {
-        "keywords": {},
-        "topic_map": {},
-        "default_topic": None,
-        "clean_ads": False,
-        "prefix": "",
-        "suffix": "",
-        "replace": {},
-        "delete": [],
-    }
+<blockquote><b>🎯 1. टॉपिक और ग्रुप फॉरवर्डिंग (Smart Routing):</b></blockquote>
+• <code>/setchat -100xxxxxxxxxx</code> - अपना टारगेट सुपरग्रुप सेट करें
+• <code>/clearchat</code> - फॉरवर्डिंग बंद करें (फाइलें बॉट DM में आएँगी)
+• <code>/settopic &lt;topic_id&gt;</code> - डिफ़ॉल्ट टॉपिक ID सेट करें
+• <code>/set_topics</code> - एक बार में सभी विषयों के लिंक सेट करें (नीचे उदाहरण देखें)
+• <code>/show_topics</code> - एक्टिव टॉपिक लिस्ट देखें
+• <code>/reset_topics</code> - सभी टॉपिक मैपिंग साफ़ करें
 
-class Settings:
-    def __init__(self, path):
-        self.path = path
-        self.data = {}
-        self._load()
+<blockquote><b>📝 /set_topics का सही फॉर्मेट:</b></blockquote>
+<code>/set_topics
+Maths: https://t.me/c/3635348530/7
+Reasoning: https://t.me/c/3635348530/8
+Polity: https://t.me/c/3635348530/11
+Current Affairs: https://t.me/c/3635348530/4</code>
 
-    def _load(self):
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = {}
-        for uid, s in raw.items():
-            d = _default_settings()
-            d.update(s)
-            d["keywords"] = {k: int(v) for k, v in d["keywords"].items()}
-            d["topic_map"] = {int(k): int(v) for k, v in d["topic_map"].items()}
-            self.data[int(uid)] = d
+<blockquote><b>⚙️ 2. ऑटो क्लीनर व कैप्शन:</b></blockquote>
+• <code>/setting</code> - पूरा इनलाइन सेटिंग्स डैशबोर्ड खोलें
+• <code>/clean_ads</code> - अन्य चैनलों के लिंक व प्रोमो ऑटो-डिलीट करें
+• <code>/replace 'पुराना' 'नया'</code> - शब्द या नाम बदलें
+• <code>/clear_replace</code> - सभी रिप्लेसमेंट साफ़ करें
+• <code>/prefix 'टेक्स्ट'</code> - कैप्शन के ऊपर नाम जोड़ें
+• <code>/suffix 'टेक्स्ट'</code> - कैप्शन के नीचे नाम जोड़ें
 
-    def get(self, uid):
-        if uid not in self.data:
-            self.data[uid] = _default_settings()
-        return self.data[uid]
-
-    def save(self):
-        try:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({str(k): v for k, v in self.data.items()}, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, self.path)
-        except Exception as e:
-            logger.error(f"Settings save failed: {e}")
-
-SETTINGS = Settings(SETTINGS_FILE)
-
-SMALL_CAPS = str.maketrans("ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ", "abcdefghijklmnopqrstuvwyz")
-INVISIBLE = set("\u200b\u200c\u200d\u2060\ufeff\ufe0f\u00ad")
-
-def norm_map(text: str):
-    out, idx = [], []
-    for i, ch in enumerate(text):
-        if ch in INVISIBLE:
-            continue
-        n = unicodedata.normalize("NFKC", ch).translate(SMALL_CAPS).lower()
-        for c in n:
-            out.append(c)
-            idx.append(i)
-    return "".join(out), idx
-
-def replace_fancy(text: str, old: str, new: str) -> str:
-    old_n, _ = norm_map(str(old).strip())
-    if not old_n or not text:
-        return text
-    norm, idx = norm_map(text)
-    spans, last_end = [], -1
-    for m in re.finditer(re.escape(old_n), norm):
-        s = idx[m.start()]
-        e = idx[m.end() - 1] + 1
-        if s < last_end:
-            continue
-        spans.append((s, e))
-        last_end = e
-    for s, e in reversed(spans):
-        text = text[:s] + str(new) + text[e:]
-    return text
-
-TAG_RE = re.compile(r"(<[^>]+>)")
-
-def map_text_parts(html: str, fn):
-    parts = TAG_RE.split(html)
-    return "".join(p if i % 2 else fn(p) for i, p in enumerate(parts))
-
-def clean_ads(html: str) -> str:
-    html = re.sub(r'<a\s+href="[^"]*">.*?</a>', "", html, flags=re.S | re.I)
-    html = re.sub(r"(https?://[^\s<]+|(?:www\.)?t\.me/[^\s<]+|telegram\.me/[^\s<]+)", "", html, flags=re.I)
-    html = re.sub(r"(?i)join\s*(?:us)?\s*[:\-]?\s*@\w+", "", html)
-    html = re.sub(r"@\w{4,}", "", html)
-    return html
-
-async def build_caption(uid: int, html: str) -> str:
-    s = SETTINGS.get(uid)
-    html = (html or "").replace("\xa0", " ").replace("\u200b", "")
-    if s["clean_ads"]:
-        html = clean_ads(html)
-
-    repl = {}
-    try:
-        repl.update(await db.get_replace_words(uid) or {})
-    except Exception:
-        pass
-    repl.update(s["replace"])
-
-    dels = []
-    try:
-        dels.extend(await db.get_delete_words(uid) or [])
-    except Exception:
-        pass
-    dels.extend(s["delete"])
-
-    def fn(t):
-        for o, n in repl.items():
-            t = replace_fancy(t, o, n)
-        for d in dels:
-            t = replace_fancy(t, d, "")
-        return t
-
-    html = map_text_parts(html, fn)
-    parts = [p for p in (s["prefix"], html.strip(), s["suffix"]) if p]
-    return "\n\n".join(parts).strip()
-
-def fit_caption(c: str) -> str:
-    plain = re.sub(r"<[^>]+>", "", c)
-    return c if len(plain) <= 1024 else plain[:1024]
+<blockquote><b>🛑 3. टास्क कंट्रोल:</b></blockquote>
+• <code>/cancel</code> - चल रहे बैच टास्क को तुरंत रोकें
+"""
+    CAPTION = """<b><a href="itsnrcbot"></a></b>\n\n<b>⚜️ Powered By : <a href="itsnrcbot">itsnrcbot 😎</a></b>"""
 
 def humanbytes(size):
-    if not size: return "0 B"
-    power, n = 1024, 0
-    units = {0: "", 1: "K", 2: "M", 3: "G", 4: "T"}
-    size = float(size)
-    while size >= power and n < 4:
+    if not size: return "0B"
+    power = 2**10
+    n = 0
+    Dic_powerN = {0: ' ', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
+    while size > power:
         size /= power
         n += 1
-    return f"{round(size, 2)} {units[n]}B"
+    return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
 
-def time_formatter(seconds: float) -> str:
-    seconds = int(seconds)
-    m, s = divmod(seconds, 60)
-    h, m = divmod(m, 60)
-    d, h = divmod(h, 24)
-    out = (f"{d}d " if d else "") + (f"{h}h " if h else "") + (f"{m}m " if m else "") + (f"{s}s" if s or not (d or h or m) else "")
-    return out.strip()
-
-def make_progress(uid: int, tg_client: Client, status_msg: Message, label: str):
-    state = {"start": time.time(), "last": 0.0}
-
-    async def cb(current, total):
-        if uid in CANCEL:
-            tg_client.stop_transmission()
-        now = time.time()
-        if now - state["last"] < 4 and current != total:
-            return
-        state["last"] = now
-        if not total:
-            return
-        elapsed = max(now - state["start"], 0.001)
-        speed = current / elapsed
-        eta = (total - current) / speed if speed > 0 else 0
-        pct = current * 100 / total
-        filled = int(pct // 10)
-        bar = "▰" * filled + "▱" * (10 - filled)
-        text = (
-            f"<b>{label}</b>\n\n[{bar}] {pct:.1f}%\n"
-            f"<b>Size:</b> {humanbytes(current)} / {humanbytes(total)}\n"
-            f"<b>Speed:</b> {humanbytes(speed)}/s\n"
-            f"<b>ETA:</b> {time_formatter(eta)}"
-        )
-        try:
-            await status_msg.edit_text(text, parse_mode=HTML)
-        except Exception:
-            pass
-
-    return cb
-
-async def retry_flood(fn, *a, **k):
-    for _ in range(3):
-        try:
-            return await fn(*a, **k)
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 1)
-    return await fn(*a, **k)
+class batch_temp(object):
+    IS_BATCH = {}
+    USER_CLEAN_ADS = {}
+    USER_PREFIX = {}
+    USER_SUFFIX = {}
+    USER_TOPIC_MAP = {}       # {user_id: {source_topic_id: target_topic_id}}
+    USER_KEYWORD_MAP = {}     # {user_id: {subject_keyword: target_topic_id}}
+    USER_DEFAULT_TOPIC = {}   # {user_id: default_topic_id}
 
 def get_message_type(msg):
-    for attr, name in (
-        ("animation", "Animation"), ("sticker", "Sticker"), ("video_note", "VideoNote"),
-        ("voice", "Voice"), ("audio", "Audio"), ("video", "Video"),
-        ("photo", "Photo"), ("document", "Document"),
-    ):
-        if getattr(msg, attr, None):
-            return name
-    if getattr(msg, "text", None):
-        return "Text"
+    if getattr(msg, 'document', None): return "Document"
+    if getattr(msg, 'video', None): return "Video"
+    if getattr(msg, 'photo', None): return "Photo"
+    if getattr(msg, 'audio', None): return "Audio"
+    if getattr(msg, 'text', None): return "Text"
     return None
 
-def media_name(msg) -> str:
-    for a in ("video", "document", "audio", "animation"):
-        m = getattr(msg, a, None)
-        if m and getattr(m, "file_name", None):
-            return m.file_name
-    return ""
+def detect_target_topic(user_id: int, msg: Message, source_topic: int = None) -> int:
+    # 1. सीधे ID मैपिंग की जाँच (/map_topic)
+    if source_topic:
+        mapped_id = batch_temp.USER_TOPIC_MAP.get(user_id, {}).get(source_topic)
+        if mapped_id:
+            return mapped_id
 
-def detect_topic(uid: int, msg: Message, source_topic):
-    s = SETTINGS.get(uid)
-    if source_topic and source_topic in s["topic_map"]:
-        return s["topic_map"][source_topic]
-    if s["keywords"]:
-        blob = f"{msg.caption or msg.text or ''} {media_name(msg)}"
-        hay = norm_map(blob)[0]
-        hay = re.sub(r"[_.\-]+", " ", hay)
-        for kw in sorted(s["keywords"], key=len, reverse=True):
-            if re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", hay):
-                return s["keywords"][kw]
-    return s["default_topic"]
+    # 2. कैप्शन / फ़ाइलनेम / टेक्स्ट से कीवर्ड मैचिंग (/set_topics)
+    keyword_map = batch_temp.USER_KEYWORD_MAP.get(user_id, {})
+    if keyword_map:
+        searchable_text = (msg.caption or msg.text or "").lower()
+        if msg.video and getattr(msg.video, 'file_name', None):
+            searchable_text += " " + msg.video.file_name.lower()
+        elif msg.document and getattr(msg.document, 'file_name', None):
+            searchable_text += " " + msg.document.file_name.lower()
 
-# ───────────────────────── Login & Logout System ─────────────────────────
-@app.on_message(filters.command(["login"]) & filters.private)
-async def login_cmd(client: Client, message: Message):
-    uid = message.from_user.id
-    if await db.get_session(uid):
-        return await message.reply_text("✅ आप पहले से लॉगिन हैं! अगर नया अकाउंट जोड़ना है तो पहले <code>/logout</code> करें।", parse_mode=HTML)
+        for kw, target_id in keyword_map.items():
+            if re.search(r'\b' + re.escape(kw) + r'\b', searchable_text, re.IGNORECASE) or kw in searchable_text:
+                return target_id
+
+    # 3. डिफ़ॉल्ट टॉपिक
+    return batch_temp.USER_DEFAULT_TOPIC.get(user_id, None)
+
+async def apply_caption_replacements(user_id: int, caption: str) -> str:
+    if not caption: return ""
+    if batch_temp.USER_CLEAN_ADS.get(user_id, False):
+        caption = re.sub(r'(https?://\S+|t\.me/\S+)', '', caption)
+        caption = re.sub(r'Join\s*:\s*@\S+', '', caption, flags=re.IGNORECASE)
+
+    repl_words = await db.get_replace_words(user_id)
+    if repl_words:
+        for old_w, new_w in repl_words.items():
+            caption = caption.replace(old_w, new_w)
+            
+    del_words = await db.get_delete_words(user_id)
+    if del_words:
+        for del_w in del_words:
+            caption = caption.replace(del_w, "")
+
+    prefix = batch_temp.USER_PREFIX.get(user_id, "")
+    suffix = batch_temp.USER_SUFFIX.get(user_id, "")
+    if prefix: caption = f"{prefix}\n\n{caption}"
+    if suffix: caption = f"{caption}\n\n{suffix}"
+    return caption.strip()
+
+async def rewrite_text_and_links(client: Client, text_content: str, entities, destination_chat: int, user_id: int):
+    if not text_content: return "", []
+    text_content = await apply_caption_replacements(user_id, text_content)
+    try:
+        dest_chat_obj = await client.get_chat(destination_chat)
+        if dest_chat_obj.username:
+            my_base_link = f"https://t.me/{dest_chat_obj.username}"
+        else:
+            clean_dest_id = str(destination_chat).replace("-100", "")
+            my_base_link = f"https://t.me/c/{clean_dest_id}"
+            
+        text_content = re.sub(r'https?://t\.me/(?:c/\d+|[a-zA-Z0-9_]+)/(\d+)', rf'{my_base_link}/\1', text_content)
+        text_content = re.sub(r'https?://t\.me/(?:joinchat/|\+)?([a-zA-Z0-9_]+)', my_base_link, text_content)
+
+        if entities:
+            for ent in entities:
+                if ent.type == enums.MessageEntityType.TEXT_LINK and ent.url:
+                    post_match = re.search(r'/(\d+)$', ent.url)
+                    if post_match:
+                        ent.url = f"{my_base_link}/{post_match.group(1)}"
+                    else:
+                        ent.url = my_base_link
+    except Exception as e:
+        logger.error(f"Link rewrite error: {e}")
+    return text_content, entities
+
+# --- TOPIC ROUTING COMMANDS ---
+
+@Client.on_message(filters.command(["set_topics"]) & filters.private)
+async def set_topics_bulk_cmd(client: Client, message: Message):
+    text = message.text.replace("/set_topics", "").strip()
+    if not text:
+        return await message.reply_text(
+            "<b>📌 Topic Setup Format:</b>\n\n"
+            "<code>/set_topics\n"
+            "Maths: https://t.me/c/3635348530/7\n"
+            "Reasoning: https://t.me/c/3635348530/8\n"
+            "Polity: https://t.me/c/3635348530/11\n"
+            "Current Affairs: https://t.me/c/3635348530/4</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
     
-    LOGIN_STEPS[uid] = {"step": "phone"}
-    await message.reply_text(
-        "📱 <b>कृपया अपना फ़ोन नंबर कंट्री कोड के साथ भेजें:</b>\n<i>उदाहरण: +919876543210</i>",
-        parse_mode=HTML
-    )
+    mapping = {}
+    lines = text.split("\n")
+    for line in lines:
+        if ":" in line:
+            parts = line.split(":", 1)
+            name = parts[0].strip().lower()
+            link = parts[1].strip()
+            match = re.search(r"/(\d+)$", link)
+            if match:
+                topic_id = int(match.group(1))
+                mapping[name] = topic_id
 
-@app.on_message(filters.command(["logout"]) & filters.private)
-async def logout_cmd(client: Client, message: Message):
-    uid = message.from_user.id
-    await db.set_session(uid, None)
-    LOGIN_STEPS.pop(uid, None)
-    await message.reply_text("🚪 <b>आप सफलतापूर्वक लॉगआउट हो गए हैं।</b>", parse_mode=HTML)
+    if not mapping:
+        return await message.reply_text("❌ कोई मान्य टॉपिक लिंक नहीं मिला। सही प्रारूप में भेजें।")
 
-# ───────────────────────── General Commands ─────────────────────────
-TOPIC_HELP = """<b>📚 सम्पूर्ण कमांड गाइड</b>
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = mapping
+    
+    out = "<b>✅ सभी विषय और उनके टॉपिक ID सफलतापूर्वक सेट हो गए:</b>\n\n"
+    for name, t_id in mapping.items():
+        out += f"• <b>{name.title()}</b> ➔ Topic ID: <code>{t_id}</code>\n"
+    await message.reply_text(out, parse_mode=enums.ParseMode.HTML)
 
-<b>🔐 लॉगिन सिस्टम:</b>
-• <code>/login</code> - अपना टेलीग्राम अकाउंट लॉगिन करें (हमेशा सेव रहेगा)
-• <code>/logout</code> - अकाउंट लॉगआउट करें
+@Client.on_message(filters.command(["map_topic"]) & filters.private)
+async def map_topic_cmd(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 3:
+        return await message.reply_text(
+            "<b>📌 Topic Map Usage:</b>\n"
+            "<code>/map_topic &lt;सामने_का_topic_id&gt; &lt;आपका_topic_id&gt;</code>\n\n"
+            "<i>उदा:</i> <code>/map_topic 4 15</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    try:
+        s_id = int(args[1])
+        t_id = int(args[2])
+        if message.from_user.id not in batch_temp.USER_TOPIC_MAP:
+            batch_temp.USER_TOPIC_MAP[message.from_user.id] = {}
+        batch_temp.USER_TOPIC_MAP[message.from_user.id][s_id] = t_id
+        await message.reply_text(
+            f"<b>✅ मैपिंग सेव हो गई:</b>\nस्रोत टॉपिक <code>{s_id}</code> ➔ आपका टॉपिक <code>{t_id}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    except ValueError:
+        await message.reply_text("❌ केवल संख्या डालें।")
 
-<b>🎯 टारगेट / टॉपिक:</b>
-• <code>/setchat -100xxxxxxxxxx</code> - टारगेट ग्रुप सेट करें
-• <code>/clearchat</code> - फॉरवर्डिंग बंद करें
-• <code>/settopic &lt;topic_id&gt;</code> - डिफ़ॉल्ट टॉपिक
-• <code>/set_topics</code> - विषय: लिंक सेट करें
-• <code>/show_topics</code> - सेटिंग्स देखें
-• <code>/reset_topics</code> - सब साफ़ करें
+@Client.on_message(filters.command(["show_topics"]) & filters.private)
+async def show_topics_cmd(client: Client, message: Message):
+    kw_mapping = batch_temp.USER_KEYWORD_MAP.get(message.from_user.id, {})
+    id_mapping = batch_temp.USER_TOPIC_MAP.get(message.from_user.id, {})
+    default_top = batch_temp.USER_DEFAULT_TOPIC.get(message.from_user.id, "सेट नहीं")
 
-<b>⚙️️ कैप्शन:</b>
-• <code>/replace 'पुराना' 'नया'</code> - शब्द बदलें
-• <code>/delword शब्द</code> - शब्द हटाएं
-• <code>/clean_ads on|off</code> - ऐड्स हटाएं
-• <code>/cancel</code> - टास्क रोकें
-"""
+    out = f"<b>📋 आपकी एक्टिव टॉपिक सेटिंग्स:</b>\n\n"
+    out += f"<b>डिफ़ॉल्ट टॉपिक:</b> <code>{default_top}</code>\n\n"
 
-@app.on_message(filters.command(["start", "help", "topichelp"]) & filters.private)
-async def help_cmd(client: Client, message: Message):
-    await message.reply_text(TOPIC_HELP, parse_mode=HTML)
+    if kw_mapping:
+        out += "<b>🔸 ऑटो-कीवर्ड विषय:</b>\n"
+        for s, t in kw_mapping.items():
+            out += f"• {s.title()} ➔ Topic ID: <code>{t}</code>\n"
+        out += "\n"
 
-@app.on_message(filters.command(["setchat"]) & filters.private)
-async def set_chat_cmd(client: Client, message: Message):
+    if id_mapping:
+        out += "<b>🔸 डायरेक्ट ID मैपिंग:</b>\n"
+        for s, t in id_mapping.items():
+            out += f"• स्रोत ID <code>{s}</code> ➔ आपका Topic ID: <code>{t}</code>\n"
+
+    if not kw_mapping and not id_mapping:
+        out += "<i>ℹ️ अभी कोई कस्टम टॉपिक सेट नहीं है।</i>"
+
+    await message.reply_text(out, parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["reset_topics"]) & filters.private)
+async def reset_topics_cmd(client: Client, message: Message):
+    batch_temp.USER_TOPIC_MAP[message.from_user.id] = {}
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = {}
+    batch_temp.USER_DEFAULT_TOPIC.pop(message.from_user.id, None)
+    await message.reply_text("🧹 <b>सभी टॉपिक मैपिंग और कीवर्ड्स साफ़ कर दिए गए हैं।</b>", parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["settopic"]) & filters.private)
+async def set_default_topic(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
-        return await message.reply_text("<code>/setchat -100xxxxxxxxxx</code>", parse_mode=HTML)
+        return await message.reply_text("<code>/settopic &lt;topic_id&gt;</code> या <code>/settopic clear</code>", parse_mode=enums.ParseMode.HTML)
+    if args[1].lower() == "clear":
+        batch_temp.USER_DEFAULT_TOPIC.pop(message.from_user.id, None)
+        return await message.reply_text("✅ डिफ़ॉल्ट टॉपिक हटा दिया गया।")
+    try:
+        t_id = int(args[1])
+        batch_temp.USER_DEFAULT_TOPIC[message.from_user.id] = t_id
+        await message.reply_text(f"✅ <b>डिफ़ॉल्ट टॉपिक सेट हुआ:</b> <code>{t_id}</code>", parse_mode=enums.ParseMode.HTML)
+    except ValueError:
+        await message.reply_text("❌ केवल संख्या डालें।")
+
+# --- CORE USER SETTINGS & TOOLS ---
+
+@Client.on_message(filters.command(["setting", "settings"]) & filters.private)
+async def open_settings_panel(client: Client, message: Message):
+    buttons = [
+        [
+            InlineKeyboardButton("Set Chat ID", callback_data="set_chat_help"),
+            InlineKeyboardButton("Reset Chat ID", callback_data="clearchat_call")
+        ],
+        [
+            InlineKeyboardButton("Set Rename Tag", callback_data="rename_tag_help"),
+            InlineKeyboardButton("Caption", callback_data="caption_help")
+        ],
+        [
+            InlineKeyboardButton("Replace Words", callback_data="replace_help"),
+            InlineKeyboardButton("Clean Ads", callback_data="toggle_clean_ads_call")
+        ],
+        [
+            InlineKeyboardButton("Session Login", callback_data="login_help"),
+            InlineKeyboardButton("Close Menu ❌", callback_data="close_btn")
+        ]
+    ]
+    img = "https://i.ibb.co/3kX9tjGXP/settings.jpg"
+    await message.reply_photo(
+        photo=img,
+        caption="<b>⚙️ Settings & Configuration Dashboard</b>\n\n<i>नीचे दिए गए विकल्पों से अपने बोट को कस्टमाइज़ करें:</i>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
+    )
+
+@Client.on_message(filters.command(["replace", "r"]) & filters.private)
+async def easy_replace_command(client: Client, message: Message):
+    try:
+        args = shlex.split(message.text)
+        if len(args) < 3:
+            return await message.reply_text("<code>/replace 'Old Word' 'New Word'</code>", parse_mode=enums.ParseMode.HTML)
+        await db.set_replace_words(message.from_user.id, {args[1]: args[2]})
+        await message.reply_text(f"✅ <b>Replacement Saved:</b> <code>{args[1]}</code> ➔ <code>{args[2]}</code>", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+@Client.on_message(filters.command(["clear_replace"]) & filters.private)
+async def clear_replace_command(client: Client, message: Message):
+    await db.col.update_one({'id': message.from_user.id}, {'$set': {'replace_words': {}, 'delete_words': []}})
+    await message.reply_text("🧹 <b>सभी रिप्लेसमेंट साफ़ कर दिए गए।</b>", parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["clean_ads"]) & filters.private)
+async def toggle_clean_ads(client: Client, message: Message):
+    c = batch_temp.USER_CLEAN_ADS.get(message.from_user.id, False)
+    batch_temp.USER_CLEAN_ADS[message.from_user.id] = not c
+    await message.reply_text(f"<b>Ad Cleaner:</b> {'🟢 चालू' if not c else '🔴 बंद'}", parse_mode=enums.ParseMode.HTML)
+
+@Client.on_message(filters.command(["prefix"]) & filters.private)
+async def set_prefix(client: Client, message: Message):
+    args = shlex.split(message.text)
+    if len(args) < 2:
+        batch_temp.USER_PREFIX[message.from_user.id] = ""
+        return await message.reply_text("Prefix हटा दिया गया।")
+    batch_temp.USER_PREFIX[message.from_user.id] = args[1]
+    await message.reply_text(f"✅ Prefix सेट हुआ: <code>{args[1]}</code>")
+
+@Client.on_message(filters.command(["suffix"]) & filters.private)
+async def set_suffix(client: Client, message: Message):
+    args = shlex.split(message.text)
+    if len(args) < 2:
+        batch_temp.USER_SUFFIX[message.from_user.id] = ""
+        return await message.reply_text("Suffix हटा दिया गया।")
+    batch_temp.USER_SUFFIX[message.from_user.id] = args[1]
+    await message.reply_text(f"✅ Suffix सेट हुआ: <code>{args[1]}</code>")
+
+@Client.on_message(filters.command(["setchat"]) & filters.private)
+async def set_dump_chat_command(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply_text("<code>/setchat -100xxxxxxxxxx</code>", parse_mode=enums.ParseMode.HTML)
+    if args[1].lower() == "clear":
+        await db.del_dump_chat(message.from_user.id)
+        return await message.reply_text("✅ Dump Chat हटा दी गई।")
     try:
         chat_id = int(args[1])
         chat = await client.get_chat(chat_id)
         await db.set_dump_chat(message.from_user.id, chat_id)
-        await message.reply_text(f"✅ टारगेट ग्रुप: <code>{chat_id}</code> ({chat.title})", parse_mode=HTML)
+        await message.reply_text(f"✅ <b>टारगेट ग्रुप सेट:</b> <code>{chat_id}</code> ({chat.title})", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-@app.on_message(filters.command(["clearchat"]) & filters.private)
-async def clear_chat_cmd(client: Client, message: Message):
-    await db.set_dump_chat(message.from_user.id, None)
-    await message.reply_text("✅ फॉरवर्डिंग बंद। अब फाइलें इसी चैट में आएंगी।")
+@Client.on_message(filters.command(["clearchat"]) & filters.private)
+async def reset_my_dump_chat(client: Client, message: Message):
+    await db.del_dump_chat(message.from_user.id)
+    batch_temp.USER_DEFAULT_TOPIC.pop(message.from_user.id, None)
+    batch_temp.USER_TOPIC_MAP[message.from_user.id] = {}
+    batch_temp.USER_KEYWORD_MAP[message.from_user.id] = {}
+    await message.reply_text("✅ <b>ग्रुप फॉरवर्डिंग बंद कर दी गई है! फाइलें अब पर्सनल चैट में आएँगी।</b>", parse_mode=enums.ParseMode.HTML)
 
-@app.on_message(filters.command(["settopic"]) & filters.private)
-async def set_topic_cmd(client: Client, message: Message):
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        return await message.reply_text("<code>/settopic 12</code>", parse_mode=HTML)
-    SETTINGS.get(message.from_user.id)["default_topic"] = int(args[1])
-    SETTINGS.save()
-    await message.reply_text(f"✅ डिफ़ॉल्ट टॉपिक: <code>{args[1]}</code>", parse_mode=HTML)
-
-@app.on_message(filters.command(["set_topics"]) & filters.private)
-async def set_topics_cmd(client: Client, message: Message):
-    text = re.sub(r"^/set_topics(@\w+)?", "", message.text).strip()
-    if not text:
-        return await message.reply_text(
-            "<b>फॉर्मेट:</b>\n<code>/set_topics\nMaths: https://t.me/c/123/7\nReasoning: https://t.me/c/123/8</code>",
-            parse_mode=HTML,
-        )
-    mapping = {}
-    for line in text.splitlines():
-        if ":" not in line: continue
-        name, link = line.split(":", 1)
-        name = norm_map(name.strip())[0]
-        m = re.search(r"(\d+)\s*/?\s*$", link.strip())
-        if name and m:
-            mapping[name] = int(m.group(1))
-    if not mapping:
-        return await message.reply_text("❌ कोई सही लाइन नहीं मिली।")
-    SETTINGS.get(message.from_user.id)["keywords"] = mapping
-    SETTINGS.save()
-    out = "<b>✅ सभी विषय सेट हो गए:</b>\n\n" + "\n".join(
-        f"• <b>{n.title()}</b> ➔ <code>{t}</code>" for n, t in mapping.items()
-    )
-    await message.reply_text(out, parse_mode=HTML)
-
-@app.on_message(filters.command(["show_topics"]) & filters.private)
-async def show_topics_cmd(client: Client, message: Message):
-    s = SETTINGS.get(message.from_user.id)
-    out = "<b>📋 टॉपिक सेटिंग्स</b>\n\n"
-    out += f"<b>डिफ़ॉल्ट:</b> <code>{s['default_topic']}</code>\n\n<b>विषय:</b>\n"
-    out += "\n".join(f"• {k.title()} ➔ <code>{v}</code>" for k, v in s["keywords"].items()) or "—"
-    out += f"\n\n<b>Clean Ads:</b> {'ON' if s['clean_ads'] else 'OFF'}"
-    await message.reply_text(out, parse_mode=HTML)
-
-@app.on_message(filters.command(["reset_topics"]) & filters.private)
-async def reset_topics_cmd(client: Client, message: Message):
-    s = SETTINGS.get(message.from_user.id)
-    s["keywords"], s["topic_map"], s["default_topic"] = {}, {}, None
-    SETTINGS.save()
-    await message.reply_text("✅ सभी टॉपिक सेटिंग्स साफ़ हो गईं।")
-
-@app.on_message(filters.command(["replace"]) & filters.private)
-async def replace_cmd(client: Client, message: Message):
-    args = re.sub(r"^/replace(@\w+)?", "", message.text).strip()
-    found = re.findall(r"""['"“”‘’](.*?)['"“”‘’]""", args)
-    if len(found) < 2 or not found[0].strip():
-        return await message.reply_text("<code>/replace 'पुराना' 'नया'</code>", parse_mode=HTML)
-    SETTINGS.get(message.from_user.id)["replace"][found[0]] = found[1]
-    SETTINGS.save()
-    await message.reply_text(f"✅ <code>{found[0]}</code> ➔ <code>{found[1]}</code>", parse_mode=HTML)
-
-@app.on_message(filters.command(["clean_ads"]) & filters.private)
-async def clean_ads_cmd(client: Client, message: Message):
-    args = message.text.split()
-    s = SETTINGS.get(message.from_user.id)
-    if len(args) > 1 and args[1].lower() in ("on", "off"):
-        s["clean_ads"] = args[1].lower() == "on"
-    else:
-        s["clean_ads"] = not s["clean_ads"]
-    SETTINGS.save()
-    await message.reply_text(f"🧹 Clean Ads: <b>{'ON' if s['clean_ads'] else 'OFF'}</b>", parse_mode=HTML)
-
-@app.on_message(filters.command(["cancel"]) & filters.private)
-async def cancel_cmd(client: Client, message: Message):
-    uid = message.from_user.id
-    if uid in RUNNING:
-        CANCEL.add(uid)
-        await message.reply_text("🛑 <b>टास्क रोका जा रहा है...</b>", parse_mode=HTML)
-    else:
-        await message.reply_text("ℹ️ कोई टास्क चालू नहीं है।")
-
-# ───────────────────────── Download + Upload Handler ─────────────────────────
-async def download_and_upload(client, sender, msg, msg_type, dest, topic, caption, uid, status, tag) -> bool:
-    temp_dir = f"downloads/{uid}_{msg.id}_{int(time.time())}"
-    os.makedirs(temp_dir, exist_ok=True)
+@Client.on_message(filters.command(["start"]))
+async def send_start(client: Client, message: Message):
+    if not await db.is_user_exist(message.from_user.id):
+        await db.add_user(message.from_user.id, message.from_user.first_name)
     try:
-        file = await sender.download_media(
-            msg, file_name=f"{temp_dir}/",
-            progress=make_progress(uid, sender, status, f"📥 डाउनलोड {tag}"),
-        )
-        if not file or uid in CANCEL:
-            return False
+        await message.react(emoji=random.choice(REACTIONS), big=True)
+    except:
+        pass
+    buttons = [
+        [InlineKeyboardButton("⚙️ Settings Panel", callback_data="settings_btn")],
+        [InlineKeyboardButton("🆘 Help & Guide", callback_data="help_btn")]
+    ]
+    bot = await client.get_me()
+    await client.send_message(
+        chat_id=message.chat.id,
+        text=script.START_TXT.format(message.from_user.mention, bot.username, bot.first_name),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
+    )
 
-        thumb = None
-        try:
-            if msg_type == "Video" and msg.video.thumbs:
-                thumb = await sender.download_media(msg.video.thumbs[0].file_id, file_name=f"{temp_dir}/thumb.jpg")
-            elif msg_type == "Document" and msg.document.thumbs:
-                thumb = await sender.download_media(msg.document.thumbs[0].file_id, file_name=f"{temp_dir}/thumb.jpg")
-        except Exception:
-            thumb = None
+@Client.on_message(filters.command(["help"]))
+async def send_help(client: Client, message: Message):
+    await message.reply_text(script.HELP_TXT, parse_mode=enums.ParseMode.HTML)
 
-        kw = {"chat_id": dest}
-        if topic: kw["message_thread_id"] = topic
-        cap = {"caption": fit_caption(caption), "parse_mode": HTML}
-        up = make_progress(uid, client, status, f"📤 अपलोड {tag}")
+@Client.on_message(filters.command(["cancel"]))
+async def send_cancel(client: Client, message: Message):
+    batch_temp.IS_BATCH[message.from_user.id] = True
+    await message.reply_text("🛑 <b>टास्क तुरंत रोक दिया गया।</b>", parse_mode=enums.ParseMode.HTML)
 
-        if msg_type == "Video":
-            r = await client.send_video(video=file, duration=msg.video.duration or 0, width=msg.video.width or 0,
-                                        height=msg.video.height or 0, thumb=thumb, supports_streaming=True,
-                                        progress=up, **kw, **cap)
-        elif msg_type == "Document":
-            r = await client.send_document(document=file, thumb=thumb, progress=up, **kw, **cap)
-        elif msg_type == "Audio":
-            r = await client.send_audio(audio=file, duration=msg.audio.duration or 0, performer=msg.audio.performer,
-                                        title=msg.audio.title, thumb=thumb, progress=up, **kw, **cap)
-        elif msg_type == "Voice":
-            r = await client.send_voice(voice=file, duration=msg.voice.duration or 0, progress=up, **kw, **cap)
-        elif msg_type == "Photo":
-            r = await client.send_photo(photo=file, **kw, **cap)
-        else:
-            return False
-        return bool(r)
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+# --- UNLIMITED SUPER-FAST TOPIC FORWARDING ENGINE ---
 
-LINK_RE = re.compile(
-    r"t\.me/(?:(c)/(\d+)|(b)/([A-Za-z0-9_]+)|([A-Za-z0-9_]{4,}))/(?:(\d+)/)?(\d+)(?:-(\d+))?"
-)
-
-# ───────────────────────── Main Text & Link Router ─────────────────────────
-@app.on_message(filters.private & filters.text & ~filters.regex(r"^/"))
-async def message_router(client: Client, message: Message):
-    uid = message.from_user.id
-
-    # 1. Login State Handling
-    if uid in LOGIN_STEPS:
-        step_data = LOGIN_STEPS[uid]
-        step = step_data.get("step")
-
-        if step == "phone":
-            phone = message.text.strip().replace(" ", "")
-            login_client = Client(f"login_{uid}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-            await login_client.connect()
-            try:
-                code_hash = await login_client.send_code(phone)
-                LOGIN_STEPS[uid] = {
-                    "step": "otp",
-                    "client": login_client,
-                    "phone": phone,
-                    "phone_code_hash": code_hash.phone_code_hash
-                }
-                return await message.reply_text("📩 <b>ओटीपी (OTP) दर्ज करें:</b>\n<i>ओटीपी के बीच में स्पेस लगाकर भेजें (जैसे: 1 2 3 4 5)</i>", parse_mode=HTML)
-            except Exception as e:
-                await login_client.disconnect()
-                LOGIN_STEPS.pop(uid, None)
-                return await message.reply_text(f"❌ नंबर भेजने में त्रुटि: {e}")
-
-        elif step == "otp":
-            otp = message.text.strip().replace(" ", "")
-            login_client = step_data["client"]
-            try:
-                await login_client.sign_in(step_data["phone"], step_data["phone_code_hash"], otp)
-                sess = await login_client.export_session_string()
-                await db.set_session(uid, sess)
-                await login_client.disconnect()
-                LOGIN_STEPS.pop(uid, None)
-                return await message.reply_text("🎉 <b>सफलतापूर्वक लॉगिन हो गए!</b>\nअब आप प्राइवेट चैनल के लिंक भेजकर जितने चाहे वीडियो निकाल सकते हैं। यह तब तक लॉगिन रहेगा जब तक आप <code>/logout</code> नहीं करते।", parse_mode=HTML)
-            except SessionPasswordNeeded:
-                LOGIN_STEPS[uid]["step"] = "2fa"
-                return await message.reply_text("🔐 <b>आपके अकाउंट पर 2-Step Verification लगा है। कृपया अपना पासवर्ड भेजें:</b>", parse_mode=HTML)
-            except (PhoneCodeInvalid, PhoneCodeExpired) as e:
-                return await message.reply_text("❌ गलत या एक्सपायर्ड OTP! दोबारा सही OTP भेजें:")
-            except Exception as e:
-                await login_client.disconnect()
-                LOGIN_STEPS.pop(uid, None)
-                return await message.reply_text(f"❌ लॉगिन फेल: {e}")
-
-        elif step == "2fa":
-            password = message.text.strip()
-            login_client = step_data["client"]
-            try:
-                await login_client.check_password(password)
-                sess = await login_client.export_session_string()
-                await db.set_session(uid, sess)
-                await login_client.disconnect()
-                LOGIN_STEPS.pop(uid, None)
-                return await message.reply_text("🎉 <b>2FA सफलतापूर्वक वेरीफाई हुआ और आप लॉगिन हो गए!</b>\nअब प्राइवेट वीडियो लिंक भेजना शुरू करें।", parse_mode=HTML)
-            except PasswordHashInvalid:
-                return await message.reply_text("❌ गलत 2FA पासवर्ड! दोबारा सही पासवर्ड भेजें:")
-            except Exception as e:
-                await login_client.disconnect()
-                LOGIN_STEPS.pop(uid, None)
-                return await message.reply_text(f"❌ एरर: {e}")
-
-    # 2. Telegram Link Forwarding Handling
-    m = LINK_RE.search(message.text or "")
-    if not m:
+@Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
+async def save(client: Client, message: Message):
+    if "https://t.me/" not in message.text:
         return
 
-    if uid in RUNNING:
-        return await message.reply_text("⚠️ एक टास्क पहले से चालू है। /cancel भेजें।")
+    if batch_temp.IS_BATCH.get(message.from_user.id) is False:
+        return await message.reply_text("⚠️ <b>एक टास्क पहले से चालू है। /cancel भेजकर नया शुरू करें।</b>", parse_mode=enums.ParseMode.HTML)
 
-    is_private = bool(m.group(1))
-    if is_private:
-        chat_target = int("-100" + m.group(2))
-    else:
-        chat_target = m.group(4) or m.group(5)
+    dump_chat = await db.get_dump_chat(message.from_user.id)
+    destination_chat = dump_chat if dump_chat else message.chat.id
 
-    link_topic = int(m.group(6)) if m.group(6) else None
-    from_id = int(m.group(7))
-    to_id = int(m.group(8)) if m.group(8) else from_id
-    if to_id < from_id:
-        from_id, to_id = to_id, from_id
-
-    dump_chat = await db.get_dump_chat(uid)
-    dest = dump_chat if dump_chat else message.chat.id
-
-    RUNNING.add(uid)
-    CANCEL.discard(uid)
-    acc = None
-    status = None
-    done = skipped = failed = 0
+    datas = message.text.split("/")
+    temp = datas[-1].replace("?single", "").split("-")
+    fromID = int(temp[0].strip())
     try:
-        session = await db.get_session(uid)
-        if is_private and not session:
-            return await message.reply_text("🔒 <b>यह एक प्राइवेट चैनल है!</b>\nपहले <code>/login</code> कमांड से अपना अकाउंट लॉगिन करें (सिर्फ एक बार करना होगा)।", parse_mode=HTML)
+        toID = int(temp[1].strip())
+    except:
+        toID = fromID
 
-        if session:
-            try:
-                acc = Client(f"user_{uid}", session_string=session, api_id=API_ID, api_hash=API_HASH, in_memory=True, no_updates=True)
-                await acc.connect()
-            except Exception as e:
-                acc = None
-                if is_private:
-                    return await message.reply_text(f"❌ लॉगिन सेशन एक्सपायर हो गया है: {e}\nकृपया <code>/logout</code> करके दोबारा <code>/login</code> करें।", parse_mode=HTML)
+    batch_temp.IS_BATCH[message.from_user.id] = False
+    is_private_link = "https://t.me/c/" in message.text
 
-        sender = acc if acc else client
-        status = await message.reply_text("⚡ <b>टास्क शुरू हो रहा है...</b>", parse_mode=HTML)
-        total = to_id - from_id + 1
-
-        for n, msgid in enumerate(range(from_id, to_id + 1), 1):
-            if uid in CANCEL: break
-            tag = f"{n}/{total}"
-            try:
-                msg = await retry_flood(sender.get_messages, chat_target, msgid)
-                if not msg or msg.empty:
-                    skipped += 1
-                    continue
-                msg_type = get_message_type(msg)
-                if not msg_type:
-                    skipped += 1
-                    continue
-
-                src_topic = getattr(msg, "message_thread_id", None) or link_topic
-                topic = detect_topic(uid, msg, src_topic) if dest != message.chat.id else None
-                topic_kw = {"message_thread_id": topic} if topic else {}
-
-                if msg_type == "Text":
-                    text = await build_caption(uid, msg.text.html)
-                    if not text:
-                        skipped += 1
-                        continue
-                    await retry_flood(client.send_message, chat_id=dest, text=text, parse_mode=HTML, **topic_kw)
-                    done += 1
-                    continue
-
-                caption = await build_caption(uid, msg.caption.html if msg.caption else "")
-                protected = getattr(msg, "has_protected_content", False)
-                sent = False
-                if not protected:
-                    try:
-                        await retry_flood(sender.copy_message, chat_id=dest, from_chat_id=chat_target,
-                                          message_id=msgid, caption=fit_caption(caption),
-                                          parse_mode=HTML, **topic_kw)
-                        sent = True
-                    except Exception:
-                        pass
-                if not sent:
-                    sent = await download_and_upload(client, sender, msg, msg_type, dest, topic, caption, uid, status, tag)
-
-                if sent: done += 1
-                elif uid not in CANCEL: failed += 1
-                await asyncio.sleep(0.5)
-
-            except Exception as err:
-                failed += 1
-                logger.error(f"Error on msg {msgid}: {err}")
-                await asyncio.sleep(1)
-
-        cancelled = uid in CANCEL
-        summary = (f"{'🛑 <b>टास्क रोक दिया गया</b>' if cancelled else '✅ <b>सभी फाइलें प्रोसेस हो गईं!</b>'}\n\n"
-                   f"✔️ भेजे: {done}  |  ⏭ स्किप: {skipped}  |  ❌ फेल: {failed}")
+    acc = None
+    if is_private_link:
+        user_data = await db.get_session(message.from_user.id)
+        if not user_data:
+            batch_temp.IS_BATCH[message.from_user.id] = True
+            return await message.reply("🔒 <b>प्राइवेट लिंक के लिए पहले /login करें।</b>", parse_mode=enums.ParseMode.HTML)
         try:
-            await status.edit_text(summary, parse_mode=HTML)
-        except Exception:
-            await message.reply_text(summary, parse_mode=HTML)
-    finally:
-        if acc:
-            try: await acc.disconnect()
-            except Exception: pass
-        RUNNING.discard(uid)
-        CANCEL.discard(uid)
+            acc = Client("unlimited_fast", session_string=user_data, api_hash=API_HASH, api_id=API_ID, in_memory=True)
+            await acc.connect()
+        except Exception as e:
+            batch_temp.IS_BATCH[message.from_user.id] = True
+            return await message.reply(f"❌ लॉगिन एरर: {e}")
 
-if __name__ == "__main__":
-    print("🚀 Bot Started Successfully with Persistent Login & Topic Router!")
-    app.run()
-EOF
+    chat_target = int("-100" + datas[4]) if is_private_link else datas[3]
+    sender_app = acc if is_private_link else client
+
+    for msgid in range(fromID, toID + 1):
+        if batch_temp.IS_BATCH.get(message.from_user.id):
+            break
+
+        try:
+            try:
+                msg: Message = await sender_app.get_messages(chat_target, msgid)
+            except FloodWait as fw:
+                await asyncio.sleep(fw.value)
+                msg = await sender_app.get_messages(chat_target, msgid)
+
+            if not msg or msg.empty or not get_message_type(msg):
+                continue
+
+            # 1. ऑटोमैटिक टॉपिक पहचान (Keyword + Mapping + Default)
+            source_topic = getattr(msg, "message_thread_id", None)
+            target_topic = detect_target_topic(message.from_user.id, msg, source_topic)
+
+            # 2. टेक्स्ट और इंडेक्स मैसेज
+            msg_type = get_message_type(msg)
+            if msg_type == "Text":
+                text_content, entities = await rewrite_text_and_links(
+                    client, msg.text or "", msg.entities, destination_chat, message.from_user.id
+                )
+                kw = {"chat_id": destination_chat, "text": text_content, "entities": entities, "parse_mode": None}
+                if target_topic and destination_chat != message.chat.id:
+                    kw["message_thread_id"] = target_topic
+                await client.send_message(**kw)
+                await asyncio.sleep(0.5)
+                continue
+
+            # 3. 1-सेकंड डायरेक्ट सर्वर-साइड क्लोन
+            caption = await apply_caption_replacements(message.from_user.id, msg.caption or "")
+            kw = {
+                "chat_id": destination_chat,
+                "from_chat_id": chat_target,
+                "message_id": msgid
+            }
+            if caption:
+                kw["caption"] = caption
+            if target_topic and destination_chat != message.chat.id:
+                kw["message_thread_id"] = target_topic
+
+            copied = False
+
+            # प्रयास 1: यूजर अकाउंट से डायरेक्ट कॉपी (सुपर-फ़ास्ट)
+            if acc:
+                try:
+                    await acc.copy_message(**kw)
+                    copied = True
+                except Exception:
+                    pass
+
+            # प्रयास 2: बॉट से कॉपी
+            if not copied:
+                try:
+                    await client.copy_message(**kw)
+                    copied = True
+                except Exception:
+                    pass
+
+            # प्रयास 3: केवल तब डाउनलोड जब चैनल में रेस्ट्रिक्शन लगा हो
+            if not copied:
+                temp_dir = f"downloads/{message.id}_{msgid}"
+                os.makedirs(temp_dir, exist_ok=True)
+                try:
+                    file = await sender_app.download_media(msg, file_name=f"{temp_dir}/")
+                    send_kw = {"chat_id": destination_chat, "caption": caption}
+                    if target_topic and destination_chat != message.chat.id:
+                        send_kw["message_thread_id"] = target_topic
+
+                    if msg_type == "Video":
+                        await client.send_video(**send_kw, video=file, duration=msg.video.duration if msg.video else 0)
+                    elif msg_type == "Document":
+                        await client.send_document(**send_kw, document=file)
+                    elif msg_type == "Photo":
+                        await client.send_photo(**send_kw, photo=file)
+                    elif msg_type == "Audio":
+                        await client.send_audio(**send_kw, audio=file)
+                finally:
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
+
+            await asyncio.sleep(0.5)
+
+        except Exception as err:
+            logger.error(f"Error on msg {msgid}: {err}")
+            await asyncio.sleep(1)
+
+    if acc:
+        await acc.disconnect()
+
+    batch_temp.IS_BATCH[message.from_user.id] = True
+
+# --- INLINE CALLBACKS ---
+@Client.on_callback_query()
+async def callback_handlers(client: Client, query: CallbackQuery):
+    data = query.data
+    if data == "settings_btn":
+        await open_settings_panel(client, query.message)
+    elif data == "help_btn":
+        await query.message.reply_text(script.HELP_TXT, parse_mode=enums.ParseMode.HTML)
+    elif data == "close_btn":
+        await query.message.delete()
+    elif data == "clearchat_call":
+        await db.del_dump_chat(query.from_user.id)
+        await query.answer("ग्रुप फॉरवर्डिंग बंद कर दी गई!", show_alert=True)
+    elif data == "toggle_clean_ads_call":
+        c = batch_temp.USER_CLEAN_ADS.get(query.from_user.id, False)
+        batch_temp.USER_CLEAN_ADS[query.from_user.id] = not c
+        await query.answer(f"Ad Cleaner: {'🟢 ON' if not c else '🔴 OFF'}", show_alert=True)
+    elif data in ["set_chat_help", "rename_tag_help", "caption_help", "replace_help", "login_help"]:
+        await query.answer("कमांड की जानकारी के लिए /help देखें।", show_alert=True)
+    await query.answer()
