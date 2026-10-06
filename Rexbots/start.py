@@ -5,50 +5,53 @@
 
 import os
 import re
-import shlex
 import asyncio
 import shutil
 import logging
 from pyrogram import Client, filters, enums
-from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.errors import FloodWait, RPCError, SessionPasswordNeeded, PhoneCodeInvalid, PasswordHashInvalid
+from pyrogram.types import Message
 
-from config import API_ID, API_HASH, BOT_TOKEN
+from config import API_ID, API_HASH
 from database.db import db
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+# अगर कॉन्फिग में ग्लोबल स्ट्रिंग सेशन मौजूद हो
+try:
+    from config import STRING_SESSION
+except ImportError:
+    STRING_SESSION = None
 
-bot = Client("UltraFastRouterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+logger = logging.getLogger(__name__)
 
 class State:
     IS_BUSY = {}
     CLEAN_ADS = {}
     PREFIX = {}
     SUFFIX = {}
-    TOPIC_KEYWORD_MAP = {}   # {user_id: {"keyword": topic_id}}
-    DEFAULT_TOPIC = {}       # {user_id: topic_id}
+    TOPIC_KEYWORD_MAP = {}
+    DEFAULT_TOPIC = {}
+    LOGIN_DATA = {}
 
-# --- 1. सटीक लिंक पार्सर (सभी तरह के टेलीग्राम लिंक्स के लिए) ---
+# --- 1. सटीक लिंक पार्सर ---
 def parse_tg_link(url: str):
     url = url.split("?")[0].strip()
     
-    # 1. Private Forum Topic Link: t.me/c/CHAT_ID/TOPIC_ID/MSG_ID
+    # Private Forum Topic: t.me/c/CHAT_ID/TOPIC_ID/MSG_ID
     m_priv_topic = re.search(r"t\.me/c/(\d+)/(\d+)/(\d+)", url)
     if m_priv_topic:
         return int("-100" + m_priv_topic.group(1)), int(m_priv_topic.group(3)), int(m_priv_topic.group(2))
         
-    # 2. Private Normal Link: t.me/c/CHAT_ID/MSG_ID
+    # Private Normal: t.me/c/CHAT_ID/MSG_ID
     m_priv = re.search(r"t\.me/c/(\d+)/(\d+)", url)
     if m_priv:
         return int("-100" + m_priv.group(1)), int(m_priv.group(2)), None
         
-    # 3. Public Forum Topic Link: t.me/USERNAME/TOPIC_ID/MSG_ID
+    # Public Forum Topic: t.me/USERNAME/TOPIC_ID/MSG_ID
     m_pub_topic = re.search(r"t\.me/([^/]+)/(\d+)/(\d+)", url)
     if m_pub_topic:
         return m_pub_topic.group(1), int(m_pub_topic.group(3)), int(m_pub_topic.group(2))
         
-    # 4. Public Normal Link: t.me/USERNAME/MSG_ID
+    # Public Normal: t.me/USERNAME/MSG_ID
     m_pub = re.search(r"t\.me/([^/]+)/(\d+)", url)
     if m_pub:
         return m_pub.group(1), int(m_pub.group(2)), None
@@ -107,21 +110,40 @@ async def clean_and_format_caption(user_id: int, caption: str) -> str:
 
 # --- 2. यूजर कमांड्स ---
 
-@bot.on_message(filters.command(["start"]))
-async def start_handler(_, message: Message):
+@Client.on_message(filters.command(["start"]))
+async def start_handler(bot: Client, message: Message):
     text = (
         f"👋 <b>नमस्ते {message.from_user.mention}!</b>\n\n"
-        "⚡ <b>फास्ट टॉपिक व चैनल फॉरवर्डिंग बॉट एक्टिव है।</b>\n\n"
-        "• अपना टारगेट चैनल/ग्रुप सेट करें: <code>/setchat -100xxxxxxxxxx</code>\n"
+        "⚡ <b>फास्ट टॉपिक व चैनल फॉरवर्डिंग बॉट सक्रिय है (नो लिमिट / लाइफटाइम फ्री)।</b>\n\n"
+        "• टारगेट चैनल/ग्रुप सेट करें: <code>/setchat -100xxxxxxxxxx</code>\n"
+        "• बोट में ही वीडियो पाने के लिए: <code>/clearchat</code>\n"
         "• विषय अनुसार टॉपिक सेट करें: <code>/set_topics</code>\n"
         "• डिफ़ॉल्ट टॉपिक सेट करें: <code>/settopic &lt;topic_id&gt;</code>\n"
         "• प्राइवेट लिंक लॉगिन करें: <code>/login</code>\n"
-        "• चालू टास्क रोकें: <code>/cancel</code>"
+        "• चालू टास्क रोकें: <code>/cancel</code>\n\n"
+        "📌 <b>उपयोग:</b> प्राइवेट या पब्लिक लिंक भेजें (उदा: <code>https://t.me/c/123/10</code> या रेंज <code>https://t.me/c/123/10-20</code>)"
     )
     await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
 
-@bot.on_message(filters.command(["setchat"]) & filters.private)
-async def set_dump_chat(_, message: Message):
+@Client.on_message(filters.command(["login"]) & filters.private)
+async def login_handler(bot: Client, message: Message):
+    user_id = message.from_user.id
+    saved_sess = await db.get_session(user_id)
+    if saved_sess:
+        return await message.reply_text("✅ आपका अकाउंट पहले से लॉगिन है! नया लॉगिन करने के लिए पहले <code>/logout</code> करें।")
+    
+    State.LOGIN_DATA[user_id] = {"step": "phone"}
+    await message.reply_text("📲 कृपया अपना टेलीग्राम फोन नंबर अंतर्राष्ट्रीय फॉर्मेट में भेजें:\nउदाहरण: <code>+919876543210</code>")
+
+@Client.on_message(filters.command(["logout"]) & filters.private)
+async def logout_handler(bot: Client, message: Message):
+    user_id = message.from_user.id
+    await db.set_session(user_id, None)
+    State.LOGIN_DATA.pop(user_id, None)
+    await message.reply_text("🚪 आपका सेशन हटा दिया गया है।")
+
+@Client.on_message(filters.command(["setchat"]) & filters.private)
+async def set_dump_chat(bot: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
         return await message.reply_text("उपयोग: <code>/setchat -100xxxxxxxxxx</code>", parse_mode=enums.ParseMode.HTML)
@@ -133,8 +155,8 @@ async def set_dump_chat(_, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ चैट नहीं मिली। सुनिश्चित करें कि बॉट चैनल/ग्रुप में एडमिन है।\nएरर: {e}")
 
-@bot.on_message(filters.command(["set_topics"]) & filters.private)
-async def set_topics_bulk(_, message: Message):
+@Client.on_message(filters.command(["set_topics"]) & filters.private)
+async def set_topics_bulk(bot: Client, message: Message):
     content = message.text.replace("/set_topics", "").strip()
     if not content:
         return await message.reply_text(
@@ -163,8 +185,8 @@ async def set_topics_bulk(_, message: Message):
         res += f"• <b>{k.title()}</b> ➔ Topic ID: <code>{v}</code>\n"
     await message.reply_text(res, parse_mode=enums.ParseMode.HTML)
 
-@bot.on_message(filters.command(["settopic"]) & filters.private)
-async def set_single_topic(_, message: Message):
+@Client.on_message(filters.command(["settopic"]) & filters.private)
+async def set_single_topic(bot: Client, message: Message):
     args = message.text.split()
     if len(args) < 2 or args[1].lower() == "clear":
         State.DEFAULT_TOPIC.pop(message.from_user.id, None)
@@ -176,21 +198,80 @@ async def set_single_topic(_, message: Message):
     except ValueError:
         await message.reply_text("❌ कृपया केवल संख्यात्मक ID दर्ज करें।")
 
-@bot.on_message(filters.command(["clearchat"]) & filters.private)
-async def clear_chat_cmd(_, message: Message):
-    await db.del_dump_chat(message.from_user.id)
+@Client.on_message(filters.command(["clearchat"]) & filters.private)
+async def clear_chat_cmd(bot: Client, message: Message):
+    await db.set_dump_chat(message.from_user.id, None)
     State.DEFAULT_TOPIC.pop(message.from_user.id, None)
-    await message.reply_text("✅ टारगेट चैट हटा दी गई है। फाइलें अब पर्सनल बॉट DM में आएँगी।")
+    await message.reply_text("✅ टारगेट चैट हटा दी गई है। फाइलें अब पर्सनल बॉट चैट में आएँगी।")
 
-@bot.on_message(filters.command(["cancel"]) & filters.private)
-async def cancel_task(_, message: Message):
+@Client.on_message(filters.command(["cancel"]) & filters.private)
+async def cancel_task(bot: Client, message: Message):
     State.IS_BUSY[message.from_user.id] = False
     await message.reply_text("🛑 <b>फॉरवर्डिंग टास्क को रोक दिया गया है।</b>", parse_mode=enums.ParseMode.HTML)
 
-# --- 3. कोर फास्ट फॉरवर्डिंग और एक्सट्रैक्टर इंजन ---
+# --- 3. लॉगिन फ्लो (OTP / 2FA) ---
 
-@bot.on_message(filters.text & filters.private & ~filters.regex("^/"))
-async def universal_forwarder(_, message: Message):
+@Client.on_message(filters.text & filters.private & ~filters.regex("^/") & filters.create(lambda _, __, m: m.from_user.id in State.LOGIN_DATA))
+async def login_steps(bot: Client, message: Message):
+    user_id = message.from_user.id
+    data = State.LOGIN_DATA[user_id]
+    step = data.get("step")
+
+    if step == "phone":
+        phone = message.text.strip().replace(" ", "")
+        client = Client(f"temp_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+        await client.connect()
+        try:
+            code_obj = await client.send_code(phone)
+            data["client"] = client
+            data["phone"] = phone
+            data["phone_code_hash"] = code_obj.phone_code_hash
+            data["step"] = "otp"
+            await message.reply_text("📩 टेलीग्राम पर आया हुआ OTP कोड भेजें:\n(उदाहरण: अगर कोड 12345 है तो <code>1 2 3 4 5</code> स्पेस देकर लिखें)")
+        except Exception as e:
+            await client.disconnect()
+            State.LOGIN_DATA.pop(user_id, None)
+            await message.reply_text(f"❌ फोन नंबर अमान्य है या एरर आया: {e}")
+
+    elif step == "otp":
+        otp = message.text.strip().replace(" ", "")
+        client: Client = data["client"]
+        try:
+            await client.sign_in(data["phone"], data["phone_code_hash"], otp)
+            session_str = await client.export_session_string()
+            await db.set_session(user_id, session_str)
+            await client.disconnect()
+            State.LOGIN_DATA.pop(user_id, None)
+            await message.reply_text("🎉 <b>सफलतापूर्वक लॉगिन हो गया!</b> अब आप प्राइवेट चैनल के लिंक भेज सकते हैं।")
+        except SessionPasswordNeeded:
+            data["step"] = "2fa"
+            await message.reply_text("🔐 आपके अकाउंट पर टू-स्टेप वेरिफिकेशन (2FA) पासवर्ड लगा है। कृपया अपना पासवर्ड भेजें:")
+        except (PhoneCodeInvalid, Exception) as e:
+            await message.reply_text(f"❌ अमान्य OTP या एरर: {e}\nदोबारा /login करें।")
+            try: await client.disconnect()
+            except Exception: pass
+            State.LOGIN_DATA.pop(user_id, None)
+
+    elif step == "2fa":
+        password = message.text.strip()
+        client: Client = data["client"]
+        try:
+            await client.check_password(password)
+            session_str = await client.export_session_string()
+            await db.set_session(user_id, session_str)
+            await client.disconnect()
+            State.LOGIN_DATA.pop(user_id, None)
+            await message.reply_text("🎉 <b>सफलतापूर्वक लॉगिन हो गया!</b> अब आप प्राइवेट लिंक भेज सकते हैं।")
+        except (PasswordHashInvalid, Exception) as e:
+            await message.reply_text(f"❌ गलत पासवर्ड: {e}\nदोबारा /login करें।")
+            try: await client.disconnect()
+            except Exception: pass
+            State.LOGIN_DATA.pop(user_id, None)
+
+# --- 4. कोर एक्सट्रैक्टर और फॉरवर्डिंग इंजन ---
+
+@Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
+async def universal_forwarder(bot: Client, message: Message):
     if "t.me/" not in message.text:
         return
 
@@ -211,7 +292,7 @@ async def universal_forwarder(_, message: Message):
     if to_msg_id < from_msg_id:
         to_msg_id = from_msg_id
 
-    # टारगेट चैट और फोरम सपोर्ट डिटेक्शन
+    # टारगेट चैट और फोरम सपोर्ट
     target_chat = await db.get_dump_chat(user_id) or message.chat.id
     is_forum = False
     try:
@@ -221,9 +302,9 @@ async def universal_forwarder(_, message: Message):
     except Exception:
         pass
 
-    # यूजर सेशन लोड (प्राइवेट कंटेंट और रेस्ट्रिक्टेड फाइलों के लिए आवश्यक)
+    # यूजर सेशन लोड (पहले यूजर का, फिर ग्लोबल स्ट्रिंग सेशन)
     user_client = None
-    session_str = await db.get_session(user_id)
+    session_str = await db.get_session(user_id) or STRING_SESSION
     if session_str:
         try:
             user_client = Client(f"user_session_{user_id}", session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
@@ -244,7 +325,6 @@ async def universal_forwarder(_, message: Message):
             break
 
         msg = None
-        # पहले यूजर सेशन से, फिर बॉट से मैसेज ढूंढें
         for client_instance in [user_client, bot]:
             if not client_instance:
                 continue
@@ -266,7 +346,6 @@ async def universal_forwarder(_, message: Message):
         if not media_type:
             continue
 
-        # टॉपिक का चुनाव
         source_topic = link_topic_id or getattr(msg, "message_thread_id", None)
         topic_to_post = resolve_target_topic(user_id, msg, source_topic)
         final_topic_id = topic_to_post if (is_forum and target_chat != message.chat.id) else None
@@ -309,7 +388,7 @@ async def universal_forwarder(_, message: Message):
             except Exception:
                 pass
 
-        # 3. रेस्ट्रिक्टेड कंटेंट बाईपास (डाउनलोड और री-अपलोड)
+        # 3. रेस्ट्रिक्टेड कंटेंट डाउनलोड और री-अपलोड
         if not copied:
             temp_path = f"downloads/{user_id}_{current_id}"
             os.makedirs(temp_path, exist_ok=True)
